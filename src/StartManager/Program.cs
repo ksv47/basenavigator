@@ -262,9 +262,13 @@ internal static class Program
     public static bool LightBuild => Updater.IsLight(typeof(Program).Assembly);
 
     /// <param name="keep">«Хранить прежних версий» of the profile: the archive is trimmed to it; null — not trimmed.</param>
-    public static Updater CreateUpdater(string repository = "", int? keep = null) => new(AppContext.BaseDirectory,
-        Environment.ProcessPath ?? throw new InvalidOperationException("Не удалось определить файл программы."),
-        new GitHubReleaseSource(repository.Length > 0 ? repository : GitHubReleaseSource.DefaultRepository)) { Keep = keep, Light = LightBuild };
+    public static Updater CreateUpdater(string repository = "", int? keep = null)
+    {
+        var name = repository.Length > 0 ? repository : GitHubReleaseSource.DefaultRepository;
+        // HTTPS from the public repository; gh only when that fails (a private repository, the API limit).
+        return new(AppContext.BaseDirectory, Environment.ProcessPath ?? throw new InvalidOperationException("Не удалось определить файл программы."),
+            new FallbackReleaseSource(new GitHubHttpReleaseSource(name), new GitHubReleaseSource(name))) { Keep = keep, Light = LightBuild };
+    }
 
     private static int RunUpdate(UpdateCommand command, Version? rollbackVersion)
     {

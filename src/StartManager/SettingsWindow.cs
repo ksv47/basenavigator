@@ -219,9 +219,9 @@ internal sealed class SettingsWindow : Window
             "лишние, самые старые, удаляются при следующей установке или восстановлении. Копия установленной сейчас версии в это число не входит."));
 
         var source = Panel();
-        source.Children.Add(Label($"По умолчанию выпуски берутся из приватного репозитория {GitHubReleaseSource.DefaultRepository} через GitHub CLI (gh). " +
-            "Нужен выполненный вход «gh auth login»; токен хранит gh, программа его не читает. " +
-            "Прокси для gh задаётся переменной окружения HTTPS_PROXY (раздел PROXY — в планах)."));
+        source.Children.Add(Label($"Выпуски берутся из публичного репозитория {GitHubReleaseSource.DefaultRepository} по HTTPS " +
+            "(системный прокси или переменная окружения HTTPS_PROXY; раздел PROXY — в планах). " +
+            "Для закрытого репозитория нужен GitHub CLI (gh) с выполненным «gh auth login»; токен хранит gh, программа его не читает."));
         otherRepository = new CheckBox { Content = Label("Использовать другой репозиторий:"), IsChecked = saved.UpdateRepository.Length > 0 };
         updateRepository = new TextBox { Text = saved.UpdateRepository, PlaceholderText = "владелец/репозиторий", IsEnabled = otherRepository.IsChecked == true };
         AutomationProperties.SetName(updateRepository, "Репозиторий обновлений");

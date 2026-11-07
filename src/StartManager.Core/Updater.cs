@@ -8,7 +8,10 @@ using System.Text.Json;
 namespace StartManager.Core;
 
 /// <param name="AssetSizes">The sizes of the release files by name (gh release view … assets); null or a missing name — not known.</param>
-public sealed record ReleaseInfo(Version Version, string Tag, string Notes, IReadOnlyDictionary<string, long>? AssetSizes = null);
+/// <param name="AssetUrls">HTTPS download addresses by name (the GitHub API answered); null — the release came through gh.</param>
+/// <param name="AssetDigests">SHA256 of the files by name (lowercase hex, the API's «digest»); a missing name — not known.</param>
+public sealed record ReleaseInfo(Version Version, string Tag, string Notes, IReadOnlyDictionary<string, long>? AssetSizes = null,
+    IReadOnlyDictionary<string, string>? AssetUrls = null, IReadOnlyDictionary<string, string>? AssetDigests = null);
 
 /// <summary>The stages of preparing a release, in their order.</summary>
 public enum UpdateStage { Downloading, Verifying, Extracting, TrialRun }
@@ -52,7 +55,7 @@ public sealed record Registration(FileStream? Hold, bool Waited, bool TimedOut) 
     public void Dispose() => Hold?.Dispose();
 }
 
-/// <summary>Where releases come from; the application uses GitHub through gh, tests use a folder.</summary>
+/// <summary>Where releases come from; the application uses GitHub over HTTPS with gh as the fallback, tests use a folder.</summary>
 public interface IReleaseSource
 {
     ReleaseInfo Latest();
@@ -68,7 +71,8 @@ public interface IReleaseSource
     }
 }
 
-/// <summary>Reads releases of the private repository with the GitHub CLI; its login is reused, no token is stored.</summary>
+/// <summary>Reads releases with the GitHub CLI (the fallback of <see cref="GitHubHttpReleaseSource"/>; needed for a private
+/// repository); its login is reused, no token is stored.</summary>
 /// <param name="gh">GitHub CLI executable; tests substitute another program.</param>
 public sealed class GitHubReleaseSource(string repository = GitHubReleaseSource.DefaultRepository, string gh = "gh") : IReleaseSource
 {
@@ -86,8 +90,7 @@ public sealed class GitHubReleaseSource(string repository = GitHubReleaseSource.
     {
         using var document = JsonDocument.Parse(json);
         var tag = document.RootElement.GetProperty("tagName").GetString() ?? "";
-        if (!tag.StartsWith('v') || !System.Version.TryParse(tag[1..], out var version))
-            throw new InvalidDataException($"Непонятный номер последнего выпуска: {tag}.");
+        var version = TagVersion(tag);
         Dictionary<string, long>? sizes = null;
         if (document.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             foreach (var asset in assets.EnumerateArray())
@@ -97,6 +100,13 @@ public sealed class GitHubReleaseSource(string repository = GitHubReleaseSource.
                     (sizes ??= new(StringComparer.Ordinal))[file] = bytes;
         return new(version, tag, document.RootElement.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "", sizes);
     }
+
+    /// <summary>The version of a release tag «v0.4.0.2».</summary>
+    internal static Version TagVersion(string tag) => tag.StartsWith('v') && System.Version.TryParse(tag[1..], out var version)
+        ? version : throw new InvalidDataException($"Непонятный номер последнего выпуска: {tag}.");
+
+    /// <summary>The failure of a gh that is not installed: the fallback names what a private repository needs instead.</summary>
+    internal static bool IsMissing(Exception error) => error is InvalidOperationException { InnerException: System.ComponentModel.Win32Exception };
 
     public void Download(ReleaseInfo release, IReadOnlyList<string> assets, string directory) => Download(release, assets, directory, default);
 
@@ -439,6 +449,7 @@ public sealed class Updater
             cancel.ThrowIfCancellationRequested();
             progress?.Report(new(UpdateStage.Downloading, DownloadWatch.Received(work), total));
             progress?.Report(new(UpdateStage.Verifying));
+            VerifyDigests(release, assets, work);
             Verify(Path.Combine(work, asset), Path.Combine(work, "SHA256SUMS.txt"));
             cancel.ThrowIfCancellationRequested();
             progress?.Report(new(UpdateStage.Extracting));
@@ -1418,6 +1429,18 @@ public sealed class Updater
             File.Move(from, target, true);
         }
         finally { if (temporary is not null) TryDelete(temporary); }
+    }
+
+    /// <summary>The files against the digests GitHub told for them (any source that has them), before SHA256SUMS.txt.</summary>
+    private static void VerifyDigests(ReleaseInfo release, IEnumerable<string> assets, string work)
+    {
+        foreach (var name in assets)
+        {
+            if (release.AssetDigests?.GetValueOrDefault(name) is not { } expected) continue;
+            using var stream = File.OpenRead(Path.Combine(work, name));
+            if (!string.Equals(Convert.ToHexString(SHA256.HashData(stream)), expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Файл {name} не совпадает с контрольной суммой GitHub; файл повреждён или подменён.");
+        }
     }
 
     private static void Verify(string asset, string sums)

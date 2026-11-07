@@ -2114,6 +2114,107 @@ public sealed class UpdaterTests : IDisposable
         Assert.Null(GitHubReleaseSource.ParseLatest("{\"tagName\":\"v1.0\",\"assets\":[{\"name\":\"a.zip\",\"size\":\"big\"}]}").AssetSizes);
     }
 
+    /// <summary>GitHub over a substituted HTTP: the API answer of the fixture release (real digests, unless told), its files
+    /// behind a redirect to the storage host.</summary>
+    /// <param name="failing">A file the download address answers with HTTP 500.</param>
+    /// <param name="requests">Collects the addresses asked, in order.</param>
+    private GitHubHttpReleaseSource Https(Func<string, string?>? digest = null, string? failing = null, List<string>? requests = null)
+    {
+        const string Url = "https://github.com/owner/repo/releases/download/v0.2.0.21/";
+        var assets = Directory.GetFiles(releases).Select(x =>
+        {
+            var name = Path.GetFileName(x);
+            var sum = digest is null ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(x))).ToLowerInvariant() : digest(name);
+            return $"{{\"name\":\"{name}\",\"size\":{new FileInfo(x).Length},\"browser_download_url\":\"{Url}{name}\",\"digest\":{(sum is null ? "null" : $"\"sha256:{sum}\"")}}}";
+        });
+        var api = $"{{\"tag_name\":\"v{Next}\",\"body\":\"notes\",\"assets\":[{string.Join(",", assets)}]}}";
+        return new("owner/repo", HttpReleaseSourceTests.FakeHandler.Of(r => { requests?.Add(r.RequestUri!.ToString()); return r.RequestUri!.Host switch
+        {
+            "api.github.com" => new(System.Net.HttpStatusCode.OK) { Content = new StringContent(api) },
+            "github.com" when r.RequestUri.Segments[^1] == failing => new(System.Net.HttpStatusCode.InternalServerError),
+            "github.com" => new(System.Net.HttpStatusCode.Found) { Headers = { Location = new("https://release-assets.githubusercontent.com/" + r.RequestUri.Segments[^1]) } },
+            _ => new(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(File.ReadAllBytes(Path.Combine(releases, r.RequestUri.Segments[^1]))) },
+        }; }));
+    }
+
+    // The update without gh (07.11): the check and the preparation up to the trial run, over HTTPS only.
+    [Fact] public void AReleaseIsCheckedAndPreparedOverHttps()
+    {
+        Package(Good);
+        var updater = new Updater(app, Path.Combine(app, Exe), new FallbackReleaseSource(Https(), new GitHubReleaseSource("owner/repo", Path.Combine(folder, "no-gh"))), FakeProbe)
+        { Keep = 3, Light = true };
+        var latest = updater.Latest();
+        Assert.Equal(Next, latest.Version);
+        var recorder = new Recorder();
+        updater.Stage(latest, Runtime, true, recorder);
+        Assert.Equal("0.2.0.21", updater.PendingVersion);
+        Assert.Equal("new program", File.ReadAllText(Path.Combine(app, Updater.PendingFolder, Exe)));
+        Assert.Equal([UpdateStage.Downloading, UpdateStage.Verifying, UpdateStage.Extracting, UpdateStage.TrialRun], recorder.Reports.Select(x => x.Stage).Distinct());
+        Assert.Equal(DownloadSizeOf(latest), recorder.Reports.Last(x => x.Stage == UpdateStage.Downloading).Received);
+        Assert.Empty(Directory.GetDirectories(app, ".update-*"));
+    }
+
+    // Codex audit 07.11 (optional): HTTPS brings the package but fails on SHA256SUMS.txt; the fallback gh writes both files
+    // again and the preparation goes on to the trial run.
+    [Fact] public void AnHttpsDownloadFailingMidwayIsCompletedThroughGh()
+    {
+        var asset = Package(Good);
+        var calls = Path.Combine(folder, "gh-calls.txt");
+        var gh = Path.Combine(folder, OperatingSystem.IsWindows() ? "gh.cmd" : "gh");
+        // The download arguments: release download <tag> --repo <repo> --dir <dir> --clobber --pattern …; the 7th is the folder.
+        // Codex re-check 07.11 (P3): gh starts only after HTTPS brought the package and not the checksums, and it overwrites
+        // only when asked to (--clobber); otherwise it fails and so does the staging.
+        File.WriteAllText(gh, OperatingSystem.IsWindows()
+            ? $"@echo off\r\n>>\"{calls}\" echo %*\r\n" +
+              $"if not exist \"%~7\\{asset}\" (echo no package 1>&2& exit /b 3)\r\n" +
+              "if exist \"%~7\\SHA256SUMS.txt\" (echo checksums present 1>&2& exit /b 3)\r\n" +
+              "if not \"%8\"==\"--clobber\" (echo no clobber 1>&2& exit /b 3)\r\n" +
+              $"copy /y \"{releases}\\*\" \"%~7\" >nul\r\n"
+            : $"#!/bin/sh\necho \"$*\" >> '{calls}'\n" +
+              $"[ -f \"$7/{asset}\" ] || {{ echo no package >&2; exit 3; }}\n" +
+              "[ ! -e \"$7/SHA256SUMS.txt\" ] || { echo checksums present >&2; exit 3; }\n" +
+              "[ \"$8\" = --clobber ] || { echo no clobber >&2; exit 3; }\n" +
+              $"cp '{releases}'/* \"$7\"/\n");
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(gh, (UnixFileMode)0b111_101_101);
+        // The guard of the fake itself: HTTPS failing on the package already sends gh to an empty folder, which it refuses.
+        var early = new Updater(app, Path.Combine(app, Exe), new FallbackReleaseSource(Https(failing: asset), new GitHubReleaseSource("owner/repo", gh)), FakeProbe)
+        { Keep = 3, Light = true };
+        Assert.Contains("no package", Assert.Throws<InvalidOperationException>(() => early.Stage(early.Latest(), Runtime, true)).Message);
+        File.Delete(calls);
+        var requests = new List<string>();
+        var https = Https(failing: "SHA256SUMS.txt", requests: requests);
+        var updater = new Updater(app, Path.Combine(app, Exe), new FallbackReleaseSource(https, new GitHubReleaseSource("owner/repo", gh)), FakeProbe)
+        { Keep = 3, Light = true };
+        var latest = updater.Latest();
+        updater.Stage(latest, Runtime, true);
+        // Over HTTPS: the package came whole from the storage host, then the checksums failed.
+        Assert.Equal(["api.github.com/" + "repos/owner/repo/releases/latest", "github.com/" + asset, "release-assets.githubusercontent.com/" + asset,
+            "github.com/SHA256SUMS.txt"], requests.Select(x => new Uri(x)).Select(x => x.Host + "/" + (x.Host == "api.github.com" ? x.AbsolutePath[1..] : x.Segments[^1])));
+        Assert.Equal("0.2.0.21", updater.PendingVersion);
+        Assert.Equal("new program", File.ReadAllText(Path.Combine(app, Updater.PendingFolder, Exe)));
+        Assert.StartsWith($"release download v{Next} --repo owner/repo", Assert.Single(File.ReadAllLines(calls)));
+        Assert.Contains(asset, File.ReadAllText(calls));
+        Assert.Empty(Directory.GetDirectories(app, ".update-*"));
+    }
+
+    private long DownloadSizeOf(ReleaseInfo release) => release.AssetSizes!.Values.Sum();
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AFileNotMatchingTheGitHubDigestIsNotInstalled(bool package)
+    {
+        var asset = Package(Good);
+        var wrong = new string('0', 64);
+        var source = Https(name => (name == asset) == package ? wrong : null);
+        var updater = new Updater(app, Path.Combine(app, Exe), source, FakeProbe) { Keep = 3, Light = true };
+        var error = Assert.Throws<InvalidDataException>(() => updater.Stage(source.Latest(), Runtime, true));
+        Assert.Contains($"Файл {(package ? asset : "SHA256SUMS.txt")} не совпадает с контрольной суммой GitHub", error.Message);
+        Assert.Null(updater.PendingVersion);
+        Assert.Empty(Directory.GetDirectories(app, ".update-*"));
+        Assert.Equal("old program", Read(Exe));
+    }
+
     [Fact] public void ProgressTextsNameTheStage()
     {
         var culture = System.Globalization.CultureInfo.CurrentCulture;
