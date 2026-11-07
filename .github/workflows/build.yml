@@ -1,0 +1,37 @@
+# Build and tests on Windows and Linux for every push to main and every pull request.
+# The same commands as a local check; nothing is published.
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build src/StartManager/StartManager.csproj -c Release
+      - name: Test
+        run: dotnet test src/StartManager.Tests/StartManager.Tests.csproj -c Release --blame-hang --blame-hang-timeout 3m

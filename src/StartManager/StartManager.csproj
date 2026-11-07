@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>BaseNavigator</AssemblyName>
+    <RootNamespace>StartManager</RootNamespace>
+    <Product>БазоНавигатор</Product>
+    <AssemblyTitle>БазоНавигатор</AssemblyTitle>
+    <Version>0.4.0</Version>
+    <AssemblyVersion>0.4.0.2</AssemblyVersion>
+    <FileVersion>0.4.0.2</FileVersion>
+    <ApplicationIcon>Assets/basenavigator.ico</ApplicationIcon>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <!-- Single-file delivery: 99 -> 47 MB; window start measured about +0.1 s at most (reports/package-size-0.2.0.19). -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true' And '$(SelfContained)' == 'true'">
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The updater downloads the same delivery variant as the running build. -->
+    <AssemblyMetadata Include="PackageVariant" Value="self-contained" Condition="'$(SelfContained)' == 'true'" />
+    <AssemblyMetadata Include="PackageVariant" Value="light" Condition="'$(SelfContained)' != 'true'" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Start-with-log.cmd" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <AvaloniaResource Include="Assets/basenavigator.ico" />
+    <None Update="Assets/basenavigator.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- MIT: the licence goes with every copy. In Assets/ because updaters up to 0.4.0.0 refuse other top-level files. -->
+    <None Include="../../LICENSE" Link="Assets/LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+    <ProjectReference Include="../StartManager.Core/StartManager.Core.csproj" />
+  </ItemGroup>
+</Project>
