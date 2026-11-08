@@ -6,10 +6,11 @@ public enum ShortcutModifiers { None = 0, Ctrl = 1, Shift = 2, Alt = 4 }
 /// <summary>A key with its modifiers; Key is the name of the key in Avalonia's Key enumeration (F3, Insert, Enter, D…).</summary>
 public sealed record Shortcut(string Key, ShortcutModifiers Modifiers = ShortcutModifiers.None)
 {
-    /// <summary>As the help and the menus show it: Ctrl+Shift+F8, Alt+Enter, Insert.</summary>
+    /// <summary>As the original shows a key everywhere (VCL ShortCutToText): Shift+Ctrl+Alt+, «Ins», «Del» — Shift+Ctrl+F8,
+    /// Alt+Enter, Ins. The help, the menus and the toolbar hints all use this one text (Grok audit 09.11, P3).</summary>
     public override string ToString() =>
-        (Modifiers.HasFlag(ShortcutModifiers.Ctrl) ? "Ctrl+" : "") + (Modifiers.HasFlag(ShortcutModifiers.Alt) ? "Alt+" : "") +
-        (Modifiers.HasFlag(ShortcutModifiers.Shift) ? "Shift+" : "") + Key;
+        (Modifiers.HasFlag(ShortcutModifiers.Shift) ? "Shift+" : "") + (Modifiers.HasFlag(ShortcutModifiers.Ctrl) ? "Ctrl+" : "") +
+        (Modifiers.HasFlag(ShortcutModifiers.Alt) ? "Alt+" : "") + Key switch { "Insert" => "Ins", "Delete" => "Del", var name => name };
 }
 
 /// <summary>The keys of the main window. Window keys are handled before any control (the search field too); list keys only
@@ -18,7 +19,7 @@ public enum ShortcutScope { Window, List }
 
 public enum ShortcutCommand
 {
-    ShortHelp, Search, SearchByName, SearchByConnection, GoToFavorites, Snapshots, PlatformFilter,
+    ShortHelp, Search, SearchByName, SearchByConnection, GoToFavorites, Snapshots, PlatformFilter, ServiceMenu,
     Launch, LaunchWithParameters, LaunchWithLogin, Designer, DesignerWithParameters, DesignerWithLogin,
     Rename, MoveToGroup, AddBase, DuplicateBase, AddGroup, Delete, Properties, BaseInfo, Reload, ToggleFavorite,
     AssignVersion, SetLock, RemoveLock, Backup, RestoreBackup, OpenFolder, ChangeFolder, CollapseAll, ExpandAll
@@ -41,6 +42,8 @@ public static class Shortcuts
         Window(ShortcutCommand.GoToFavorites, "J", Ctrl),
         Window(ShortcutCommand.Snapshots, "L", Ctrl),
         Window(ShortcutCommand.PlatformFilter, "F8", Alt),
+        // The original's «Сервисное меню» (actV8SystemMenu): the arrow before the list heading.
+        Window(ShortcutCommand.ServiceMenu, "F10", Alt),
         List(ShortcutCommand.Launch, "F3"),
         Window(ShortcutCommand.LaunchWithParameters, "F3", Ctrl),
         List(ShortcutCommand.LaunchWithLogin, "F3", Shift),

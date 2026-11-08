@@ -71,9 +71,9 @@ public sealed partial class MainWindow
     private async void ShowSnapshotsMenu(Control anchor)
     {
         var menu = ClassicMenu("Снимки");
-        MenuItem Item(string label, System.Action action, string? gesture = null)
+        MenuItem Item(string label, System.Action action)
         {
-            var item = new MenuItem { Header = MenuHeader(label, gesture), Classes = { "scaled" }, IsEnabled = !loadFailed && !reading };
+            var item = new MenuItem { Header = MenuHeader(label), Classes = { "scaled" }, IsEnabled = !loadFailed && !reading };
             AutomationProperties.SetName(item, label); item.Click += (_, _) => action(); return item;
         }
         IReadOnlyList<(string Branch, string Path)> branches;
@@ -82,7 +82,7 @@ public sealed partial class MainWindow
         if (closed) return;
         var items = new List<Control>
         {
-            Item("Снимки информационных баз…", ShowSnapshots, "Ctrl+L"), new Separator(),
+            CommandItem(MainCommand.Snapshots, CurrentState(), ShowSnapshots), new Separator(),
             Item("Создать снимок списка", async () => await CreateSnapshot("Снимок " + Path.GetFileName(SnapshotSource))),
         };
         // Only the branches whose list exists; 8.2 and 8.3 take the same file, as in the original.

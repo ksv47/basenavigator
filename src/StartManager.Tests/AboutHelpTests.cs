@@ -62,9 +62,11 @@ public sealed class AboutHelpTests
         Assert.Contains("• F3 = Запустить 1С:Предприятие", text);
         Assert.Contains("• Ctrl+F4 = Запустить конфигуратор с выбором параметров", text);
         Assert.Contains("• F8, Ctrl+D = ", text);
-        Assert.Contains("• Ctrl+Shift+F8 = Назначить версию", text);
+        Assert.Contains("• Shift+Ctrl+F8 = Назначить версию", text);
         Assert.Contains("• Ctrl+Alt+I = Сводная информация", text);
-        foreach (var missing in new[] { "Snegopat", "Временная блокировка", "F6", "F9", "Alt+F10", "Alt+F11" })
+        // Alt+F10 opens «Сервис», as the original's «Сервисное меню» (08.11.2026).
+        Assert.Contains("• Alt+F10 = Сервисное меню", text);
+        foreach (var missing in new[] { "Snegopat", "Временная блокировка", "F6", "F9", "Alt+F11" })
             Assert.DoesNotContain(missing, text);
         Assert.StartsWith("Работа со стартером" + Environment.NewLine + "• F1", text);
     }
@@ -72,8 +74,10 @@ public sealed class AboutHelpTests
     [Fact]
     public void Shortcut_text_orders_the_modifiers()
     {
-        Assert.Equal("Ctrl+Alt+Shift+F", new Shortcut("F", ShortcutModifiers.Shift | ShortcutModifiers.Alt | ShortcutModifiers.Ctrl).ToString());
-        Assert.Equal("Insert", new Shortcut("Insert").ToString());
+        // As VCL ShortCutToText of the original: Shift, Ctrl, Alt; «Ins» and «Del».
+        Assert.Equal("Shift+Ctrl+Alt+F", new Shortcut("F", ShortcutModifiers.Shift | ShortcutModifiers.Alt | ShortcutModifiers.Ctrl).ToString());
+        Assert.Equal("Ins", new Shortcut("Insert").ToString());
+        Assert.Equal("Shift+Del", new Shortcut("Delete", ShortcutModifiers.Shift).ToString());
     }
 
     [Fact]

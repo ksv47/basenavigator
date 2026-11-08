@@ -201,7 +201,7 @@ public sealed partial class MainWindow
             : "Восстановить автоматически нельзя. «Оставить как есть» снимет отметку. Если список после этого не прочитается, исправьте файл в текстовом редакторе или замените его исправной копией: снимки списка лежат в папке Snapshots рядом с настройками."));
         body.Children.Add(DialogLayout.Label("«Оставить как есть» — если файл уже исправлен вручную или другой программой: список будет прочитан в текущем виде."));
         // On a slow share the list may be read while another window is still writing it: the same marker, but no failure.
-        body.Children.Add(DialogLayout.Label("Если этот список сейчас сохраняет другое окно БазоНавигатора, нажмите «Отмена» и через несколько секунд — «Обновить список»."));
+        body.Children.Add(DialogLayout.Label("Если этот список сейчас сохраняет другое окно БазоНавигатора, нажмите «Отмена» и через несколько секунд — «Перечитать список баз»."));
         var buttons = new WrapPanel { Orientation = Orientation.Horizontal };
         if (interrupted.BackupMatches) buttons.Children.Add(Action("Восстановить из .bak", () => dialog.Close("restore")));
         buttons.Children.Add(Action("Оставить как есть", () => dialog.Close("keep")));
@@ -231,7 +231,7 @@ public sealed partial class MainWindow
             // The open list still carries the marker: editing waits for a new load. A list that was never opened keeps the state.
             EndWriting(reload || failedBefore);
             status.Text = "Список не восстановлен: " + LegacyImport.ErrorMessage(ex) +
-                (reload || failedBefore ? " Редактирование отключено; нажмите «Обновить список»." : "");
+                (reload || failedBefore ? " Редактирование отключено; нажмите «Перечитать список баз»." : "");
             return;
         }
         EndWriting(failedBefore);

@@ -287,6 +287,10 @@ internal static class Program
                 Console.Error.WriteLine(impossible ? "Нет доступа к папке программы: обновление невозможно." : "Закройте все окна БазоНавигатора и повторите команду.");
                 return 7;
             }
+            // The window removes leftovers at its start; a console-only user gets them removed here (old program files renamed
+            // aside by earlier direct replacements on Windows: no copy runs from them under the exclusive hold).
+            if (OperatingSystem.IsWindows() && exclusive is not null && Environment.ProcessPath is { } self)
+                Updater.Cleanup(AppContext.BaseDirectory, self);
             // Console output is set up before files change: a replaced single-file program cannot load anything new (Linux).
             Console.Out.WriteLine(command == UpdateCommand.Rollback ? "Возврат сохранённой версии…" : "Проверка выпусков…");
             if (command == UpdateCommand.Rollback)

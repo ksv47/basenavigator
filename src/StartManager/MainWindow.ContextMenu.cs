@@ -84,22 +84,23 @@ public sealed partial class MainWindow
                 e.Handled = true; return;
             }
             if (loadFailed) return;
-            var row = bases.SelectedItem as LibraryRow;
-            var entry = row?.Entry is not null;
-            // The list's keys come from the table of Shortcuts, as the window's (see the constructor of MainWindow).
-            System.Action? action = ShortcutKeys.Find(ShortcutScope.List, e) switch
+            // The list's keys come from the table of Shortcuts, as the window's (see the constructor of MainWindow); a key whose
+            // command is not available for the selected row (MainCommands) stays unhandled.
+            if (ShortcutKeys.Find(ShortcutScope.List, e) is not { } command) return;
+            if (!MainCommands.CanExecute(MainCommands.Of(command), CurrentState())) { e.Handled = Refuse(MainCommands.Of(command), list: true); return; }
+            System.Action? action = command switch
             {
-                ShortcutCommand.Launch when entry => () => Launch(false),
-                ShortcutCommand.Designer when entry => () => Launch(true),
-                ShortcutCommand.LaunchWithLogin when entry => () => LaunchWithLogin(false),
-                ShortcutCommand.DesignerWithLogin when entry => () => LaunchWithLogin(true),
-                ShortcutCommand.ToggleFavorite when entry => ToggleFavorite,
-                ShortcutCommand.Rename when row is { Section: LibrarySection.None, Orphan: null } => () => EditEntryLabel(false),
-                ShortcutCommand.MoveToGroup when entry => () => EditEntryLabel(true),
+                ShortcutCommand.Launch => () => Launch(false),
+                ShortcutCommand.Designer => () => Launch(true),
+                ShortcutCommand.LaunchWithLogin => () => LaunchWithLogin(false),
+                ShortcutCommand.DesignerWithLogin => () => LaunchWithLogin(true),
+                ShortcutCommand.ToggleFavorite => ToggleFavorite,
+                ShortcutCommand.Rename => () => EditEntryLabel(false),
+                ShortcutCommand.MoveToGroup => () => EditEntryLabel(true),
                 ShortcutCommand.AddBase => async () => await AddBase(),
                 ShortcutCommand.AddGroup => () => EditGroup(null),
-                ShortcutCommand.DuplicateBase when row?.Entry is { Kind: ConnectionKind.File } => DuplicateBase,
-                ShortcutCommand.Delete when row is { Section: LibrarySection.None } or { Section: LibrarySection.Orphans } => Delete,
+                ShortcutCommand.DuplicateBase => DuplicateBase,
+                ShortcutCommand.Delete => Delete,
                 _ => null
             };
             if (action is not null) { e.Handled = true; action(); }
@@ -120,12 +121,27 @@ public sealed partial class MainWindow
         return header;
     }
 
+    // An item of the table of commands (MainCommands): its caption and key, on or off by its rule. A click checks the rule again
+    // with the state of that moment (the list may have been read again while the menu was open); before: a check of the menu itself.
+    private MenuItem CommandItem(MainCommand command, CommandState state, System.Action action, string? icon = null, string? caption = null,
+        Func<bool>? before = null)
+    {
+        var label = caption ?? MainCommands.Caption(command, state);
+        var gesture = MainCommands.KeyText(command);
+        var item = new MenuItem { Header = MenuHeader(label, gesture), IsEnabled = MainCommands.CanExecute(command, state), Classes = { "scaled" } };
+        if (icon is not null) item.Icon = UiIcons.Create(icon, typography.IconSize);
+        AutomationProperties.SetName(item, label);
+        if (gesture is not null) AutomationProperties.SetAcceleratorKey(item, gesture);
+        item.Click += (_, _) => { if ((before is null || before()) && MainCommands.CanExecute(command, CurrentState())) action(); };
+        return item;
+    }
+
     private void BuildContextMenu(ContextMenu menu)
     {
         var target = bases.SelectedItem as LibraryRow;
         var source = library.ListPath;
         var ready = !loadFailed && !reading;
-        var changes = ready && ReadOnlyList is null;
+        var state = CurrentState();
         var entry = target?.Entry;
         var group = target is { Entry: null, Section: LibrarySection.None, Orphan: null };
         // A base of a common list and a group only such bases are in are started and viewed, never changed.
@@ -146,20 +162,29 @@ public sealed partial class MainWindow
             item.Click += (_, _) => { if (SelectTarget()) action(); };
             return item;
         }
+        // The items of the table of commands: the same caption, key and availability as the toolbar and the keys.
+        MenuItem Command(MainCommand command, string icon, System.Action action, string? caption = null) =>
+            CommandItem(command, state, action, icon, caption, SelectTarget);
         var items = new List<Control>();
         if (entry is not null)
         {
-            items.Add(Item("1С:Предприятие", "play", "F3", ready, () => Launch(false)));
-            items.Add(Item("Конфигуратор", "designer", "F4", ready && entry.Kind != ConnectionKind.Web, () => Launch(true)));
+            items.Add(Command(MainCommand.Launch, "play", () => Launch(false)));
+            items.Add(Command(MainCommand.Designer, "designer", () => Launch(true)));
             items.Add(new Separator());
-            items.Add(Item(IsFavorite(entry) ? "Убрать из избранного" : "Добавить в избранное", "star-add", "F8", ready, ToggleFavorite));
-            items.Add(Item("Переместить в группу…", "move", "Shift+Ctrl+M", changes && own, () => EditEntryLabel(true)));
+            // A favorite shortcut as the original's node of «Избранное» (pbV8ContextItemPopup): in place of the favorite item
+            // «Удалить из избранных» — here the command Delete of the toolbar and Del, with its caption; no «Переместить в группу».
+            if (target!.FavoriteShortcut) items.Add(Command(MainCommand.Delete, "delete", Delete));
+            else
+            {
+                items.Add(Command(MainCommand.ToggleFavorite, "star-add", ToggleFavorite, IsFavorite(entry) ? "Убрать из избранного" : null));
+                items.Add(Command(MainCommand.MoveToGroup, "move", () => EditEntryLabel(true)));
+            }
             items.Add(new Separator());
         }
-        items.Add(Item("Создать информационную базу…", "add", "Ins", changes, async () => await AddBase()));
-        items.Add(Item("Создать новую группу…", "folder-add", "Ctrl+Ins", changes, () => EditGroup(null)));
+        items.Add(Command(MainCommand.AddBase, "add", async () => await AddBase()));
+        items.Add(Command(MainCommand.AddGroup, "folder-add", () => EditGroup(null)));
         if (entry is not null)
-            items.Add(Item("Дублировать информационную базу…", "duplicate", "Shift+Ins", changes && own && entry.Kind == ConnectionKind.File, DuplicateBase));
+            items.Add(Command(MainCommand.DuplicateBase, "duplicate", DuplicateBase));
         if (entry is not null)
         {
             items.Add(new Separator());
@@ -168,22 +193,22 @@ public sealed partial class MainWindow
         if (entry is not null || group)
         {
             items.Add(new Separator());
-            var canDelete = !group ? entry?.DisallowDelete != true : !ShownBases().Any(x => Groups.Contains(target!.Group, x.Group)) &&
-                !Groups.All(library).Any(x => x.StartsWith(target!.Group + "/", StringComparison.OrdinalIgnoreCase));
             // A group as the original: «Изменить наименование» before «Удалить».
             if (group)
             {
-                items.Add(Item("Изменить наименование…", "rename", "F2", ready && own, () => EditEntryLabel(false)));
+                items.Add(Command(MainCommand.Rename, "rename", () => EditEntryLabel(false)));
                 // The original's «Открыть каталог инф. базы» works for a group too: the folder of its properties.
-                items.Add(Item("Открыть каталог", "folder", "Shift+F12", Groups.Folder(library, target!.Group).Length > 0, OpenSelectedBaseFolder));
+                items.Add(Command(MainCommand.OpenFolder, "folder", OpenSelectedBaseFolder));
                 items.Add(new Separator());
             }
+            // A favorite shortcut has its removal above, in place of the favorite item. A forbidden removal or a group that is not
+            // empty is refused by the action with its reason in the status line.
             if (!target!.FavoriteShortcut)
-                items.Add(Item(group ? "Удалить пустую группу" : "Удалить из списка…", "delete", "Del", changes && own && canDelete, Delete));
+                items.Add(Command(MainCommand.Delete, "delete", Delete, group ? "Удалить пустую группу" : null));
             if (entry is not null)
             {
                 // As in the original: clearing the temporary files and the 1C folders of this base.
-                items.Add(Item("Очистить временные файлы…", "clear", null, ready, () => Avalonia.Threading.Dispatcher.UIThread.Post(ClearBaseCache)));
+                items.Add(Command(MainCommand.ClearCache, "clear", () => Avalonia.Threading.Dispatcher.UIThread.Post(ClearBaseCache)));
                 var folders = new MenuItem { Header = MenuHeader("Открыть каталог"), Icon = UiIcons.Create("folder", typography.IconSize), Classes = { "scaled" } };
                 AutomationProperties.SetName(folders, "Открыть каталог");
                 folders.ItemsSource = new[]
@@ -199,18 +224,19 @@ public sealed partial class MainWindow
             if (entry is not null)
             {
                 items.Add(new Separator());
-                items.Add(Item("Изменить наименование…", "rename", "F2", changes && own, () => EditEntryLabel(false)));
+                items.Add(Command(MainCommand.Rename, "rename", () => EditEntryLabel(false)));
             }
             items.Add(new Separator());
-            items.Add(Item("Назначить версию…", "edit", "Shift+Ctrl+F8", changes && own, AssignVersion));
-            if (entry is not null) items.Add(Item("Свойства информационной базы…", "edit", "Alt+Enter", ready, EditSelected));
+            items.Add(Command(MainCommand.AssignVersion, "edit", AssignVersion));
+            // As the original's pbV8ContextGroup: «Свойства группы» (actProperty) for a group too.
+            items.Add(Command(MainCommand.Properties, "edit", EditSelected, group ? "Свойства группы…" : null));
             // As the original: «Сводная информация» after a separator at the end of the base's menu.
-            if (entry is not null && target is { Orphan: null }) { items.Add(new Separator()); items.Add(Item("Сводная информация…", "database", "Ctrl+Alt+I", ready, ShowBaseInfo)); }
+            if (entry is not null && target is { Orphan: null }) { items.Add(new Separator()); items.Add(Command(MainCommand.BaseInfo, "database", ShowBaseInfo)); }
         }
-        if (target is { Orphan: not null } or { Section: LibrarySection.Orphans }) { items.Add(new Separator()); items.AddRange(OrphanMenu(target, Item)); }
+        if (target is { Orphan: not null } or { Section: LibrarySection.Orphans }) { items.Add(new Separator()); items.AddRange(OrphanMenu(target, state, Item)); }
         items.Add(new Separator());
-        var refresh = new MenuItem { Header = MenuHeader("Обновить список"), Icon = UiIcons.Create("refresh", typography.IconSize), Classes = { "scaled" } };
-        AutomationProperties.SetName(refresh, "Обновить список"); refresh.Click += (_, _) => Reload(); items.Add(refresh);
+        // As the original's actV8iReload: «Перечитать список баз», F5.
+        items.Add(CommandItem(MainCommand.Reload, state, Reload, "refresh"));
         var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
         var maxWidth = screen is null ? 750 : screen.WorkingArea.Width / screen.Scaling * .94;
         var labelWidth = items.OfType<MenuItem>().Max(x => UiTypography.Measure(AutomationProperties.GetName(x) ?? "", typography.Family, typography.InterfaceSize).Width);
@@ -247,7 +273,7 @@ public sealed partial class MainWindow
     // The button beside the favorite star, as tbClipboard beside the original's connection line.
     private void ShowCopyMenu(Control anchor)
     {
-        if (bases.SelectedItem is not LibraryRow { Entry: { } entry }) { status.Text = "Выберите информационную базу."; return; }
+        if (bases.SelectedItem is not LibraryRow { Entry: { } entry }) { status.Text = MainCommands.ChooseBaseText; return; }
         var menu = ClassicMenu("Копировать");
         menu.ItemsSource = CopyItems(entry);
         menu.Placement = PlacementMode.BottomEdgeAlignedRight;
@@ -259,8 +285,10 @@ public sealed partial class MainWindow
     private void ShowSearchTypeMenu(Control anchor)
     {
         var menu = ClassicMenu("Вид поиска");
-        MenuItem Item(SearchMode mode, string label, string icon, string gesture)
+        // The caption and the key of the search commands of the table (Ctrl+Shift+F is shown as the original shows it).
+        MenuItem Item(SearchMode mode, MainCommand command, string icon)
         {
+            var label = MainCommands.Caption(command); var gesture = MainCommands.KeyText(command) ?? "";
             var item = new MenuItem { Header = MenuHeader(label, gesture), Icon = UiIcons.Create(icon, typography.IconSize), Classes = { "scaled" },
                 ToggleType = MenuItemToggleType.Radio, IsChecked = searchMode == mode, GroupName = "search" };
             AutomationProperties.SetName(item, label); AutomationProperties.SetAcceleratorKey(item, gesture);
@@ -269,8 +297,8 @@ public sealed partial class MainWindow
         }
         menu.ItemsSource = new[]
         {
-            Item(SearchMode.Name, "Поиск по наименованию", "search", "Ctrl+Shift+F"),
-            Item(SearchMode.Connection, "Поиск по строке соединения", "search-connection", "Ctrl+Alt+F")
+            Item(SearchMode.Name, MainCommand.SearchByName, "search"),
+            Item(SearchMode.Connection, MainCommand.SearchByConnection, "search-connection")
         };
         menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
         // The keyboard goes to the menu: the arrows and Enter choose the search type.
@@ -289,7 +317,8 @@ public sealed partial class MainWindow
         var connectionSearch = searchMode == SearchMode.Connection;
         if (search.InnerLeftContent is Button type) type.Content = UiIcons.Create(connectionSearch ? "search-connection" : "search", typography.IconSize);
         search.PlaceholderText = connectionSearch ? "Соединение" : "Ctrl+F";
-        ToolTip.SetTip(search, connectionSearch ? "Поиск / отбор по строке соединения (Ctrl+Alt+F)" : "Поиск / отбор по наименованию (Ctrl+F)");
+        ToolTip.SetTip(search, connectionSearch ? $"Поиск / отбор по строке соединения ({MainCommands.KeyText(MainCommand.SearchByConnection)})"
+            : $"Поиск / отбор по наименованию ({MainCommands.KeyText(MainCommand.Search)})");
         AutomationProperties.SetName(search, connectionSearch ? "Поиск базы по строке соединения" : "Поиск базы");
     }
 
@@ -319,24 +348,17 @@ public sealed partial class MainWindow
     private void AttachConnectionMenu()
     {
         var menu = ClassicMenu("Каталог и подключение");
-        MenuItem Item(string label, string icon, string gesture, bool enabled, System.Action action)
-        {
-            var item = new MenuItem { Header = MenuHeader(label, gesture), Icon = UiIcons.Create(icon, typography.IconSize), IsEnabled = enabled, Classes = { "scaled" } };
-            AutomationProperties.SetName(item, label); AutomationProperties.SetAcceleratorKey(item, gesture);
-            item.Click += (_, _) => action();
-            return item;
-        }
         menu.Opening += (_, e) =>
         {
             // A group with a folder: the line shows the folder, the menu opens it.
-            if (bases.SelectedItem is LibraryRow { Orphan: null, Entry: null, Section: LibrarySection.None } group && Groups.Folder(library, group.Group).Length > 0)
-            { menu.ItemsSource = new List<Control> { Item("Открыть каталог", "folder", "Shift+F12", true, OpenSelectedBaseFolder) }; return; }
+            var state = CurrentState();
+            if (bases.SelectedItem is LibraryRow { Orphan: null, Entry: null, Section: LibrarySection.None } && state.GroupFolder)
+            { menu.ItemsSource = new List<Control> { CommandItem(MainCommand.OpenFolder, state, OpenSelectedBaseFolder, "folder") }; return; }
             if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) { e.Cancel = true; return; }
-            var file = entry.Kind == ConnectionKind.File;
             var items = new List<Control>
             {
-                Item("Открыть каталог", "folder", "Shift+F12", file, OpenSelectedBaseFolder),
-                Item("Изменить каталог", "edit", "Shift+F11", file && !loadFailed && !reading && ReadOnlyList is null && CommonOf(entry) is null, ChangeSelectedBaseFolder),
+                CommandItem(MainCommand.OpenFolder, state, OpenSelectedBaseFolder, "folder"),
+                CommandItem(MainCommand.ChangeFolder, state, ChangeSelectedBaseFolder, "edit"),
                 new Separator()
             };
             items.AddRange(CopyItems(entry, BaseClipboard.Kinds(entry).Where(x => x is BaseClipboardKind.Path or BaseClipboardKind.Connection).Reverse()));
@@ -358,12 +380,12 @@ public sealed partial class MainWindow
         if (bases.SelectedItem is LibraryRow { Orphan: null, Entry: null, Section: LibrarySection.None } group)
         {
             folder = Groups.Folder(library, group.Group);
-            if (folder.Length == 0) { status.Text = $"У группы «{group.Group}» не указан каталог (свойства группы, «Каталог:»)."; return; }
+            if (folder.Length == 0) { status.Text = GroupWithoutFolder(group.Group); return; }
         }
         else
         {
             if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) return;
-            if (entry.Kind != ConnectionKind.File) { status.Text = "Каталог есть только у файловой базы."; return; }
+            if (entry.Kind != ConnectionKind.File) { status.Text = MainCommands.FileFolderText; return; }
             folder = entry.Location;
         }
         try
@@ -381,7 +403,7 @@ public sealed partial class MainWindow
     private async void ChangeSelectedBaseFolder()
     {
         if (loadFailed || reading || bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) return;
-        if (entry.Kind != ConnectionKind.File) { status.Text = "Каталог меняется только у файловой базы."; return; }
+        if (entry.Kind != ConnectionKind.File) { status.Text = MainCommands.FileFolderChangeText; return; }
         if (ListLocked() || CommonLocked(entry)) return;
         try
         {

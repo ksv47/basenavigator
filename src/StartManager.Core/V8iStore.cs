@@ -19,7 +19,7 @@ public sealed class InterruptedWriteException(string path, byte[] current, bool 
 }
 
 /// <summary>The list on disk is no longer the one this store loaded: another program or window changed it.</summary>
-public sealed class ListChangedException() : IOException("Список изменён другой программой. Нажмите «Обновить список» и повторите изменение.");
+public sealed class ListChangedException() : IOException("Список изменён другой программой. Нажмите «Перечитать список баз» и повторите изменение.");
 
 /// <summary>The same bases or groups were changed both here and by another program: the change is not applied over theirs.</summary>
 public sealed class ListConflictException(IReadOnlyList<string> names) : IOException(
@@ -32,7 +32,7 @@ public sealed class ListConflictException(IReadOnlyList<string> names) : IOExcep
 /// <summary>The list was opened read-only: this change would rewrite the file. Local settings of the bases are still saved.</summary>
 public sealed class ListReadOnlyException(string reason, string? effect = null) : IOException(
     $"Список открыт только для чтения: {reason}. " + (effect ?? "Добавление, удаление, названия, подключения и группы баз не изменяются.") +
-    " Снимите ограничение и нажмите «Обновить список».")
+    " Снимите ограничение и нажмите «Перечитать список баз».")
 {
     public const string RecoveryEffect = "Восстановить список из .bak или снять отметку прерванной записи нельзя.";
     public string Reason { get; } = reason;
@@ -604,7 +604,7 @@ public sealed class V8iStore(string path)
         if (ListAccess.ReadOnlyReason(list) is { } reason) throw new ListReadOnlyException(reason, ListReadOnlyException.RecoveryEffect);
         using var source = new FileStream(list, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         using var buffer = new MemoryStream(); source.CopyTo(buffer);
-        if (!buffer.ToArray().AsSpan().SequenceEqual(seen)) throw new IOException("Список изменён другой программой. Нажмите «Обновить список».");
+        if (!buffer.ToArray().AsSpan().SequenceEqual(seen)) throw new IOException("Список изменён другой программой. Нажмите «Перечитать список баз».");
         if (ReadMarker(MarkerPath(list)) is not { } hashes) throw new IOException("Отметка прерванной записи не прочитана; восстановить список из .bak нельзя.");
         if (MatchingBackup(list, hashes) is not { } backup)
             throw new IOException("Резервная копия не совпадает с текстом до прерванной записи; восстановить список из .bak нельзя.");
@@ -619,7 +619,7 @@ public sealed class V8iStore(string path)
         if (ListAccess.ReadOnlyReason(list) is { } reason) throw new ListReadOnlyException(reason, ListReadOnlyException.RecoveryEffect);
         using var source = new FileStream(list, FileMode.Open, FileAccess.Read, FileShare.None);
         using var buffer = new MemoryStream(); source.CopyTo(buffer);
-        if (!buffer.ToArray().AsSpan().SequenceEqual(seen)) throw new IOException("Список изменён другой программой. Нажмите «Обновить список».");
+        if (!buffer.ToArray().AsSpan().SequenceEqual(seen)) throw new IOException("Список изменён другой программой. Нажмите «Перечитать список баз».");
         File.Delete(MarkerPath(list));
     }
 

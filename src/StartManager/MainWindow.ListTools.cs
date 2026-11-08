@@ -33,7 +33,7 @@ public sealed partial class MainWindow
             Item("Удалить несуществующие информационные базы…", changes, RemoveMissingBases),
             new Separator(),
             // The original's «Снимки ▾»: the snapshots of the list and a new one.
-            Item("Снимки списка информационных баз…", ready, ShowSnapshots),
+            CommandItem(MainCommand.Snapshots, CurrentState(), ShowSnapshots),
             Item("Создать снимок списка", ready, async () => await CreateSnapshot("Снимок " + Path.GetFileName(SnapshotSource))),
         };
         if (OperatingSystem.IsWindows()) { items.Add(new Separator()); items.Add(Item("Заменить букву диска…", changes, ReplaceDriveLetter)); }
@@ -88,7 +88,7 @@ public sealed partial class MainWindow
         try
         {
             if (!await ListEditor.Open(Launcher, path)) { status.Text = $"Не удалось открыть {path}."; return; }
-            status.Text = "Список открыт в редакторе. После правки нажмите «Обновить список»: изменения из редактора программа сама не перечитывает.";
+            status.Text = "Список открыт в редакторе. После правки нажмите «Перечитать список баз»: изменения из редактора программа сама не перечитывает.";
         }
         catch (Exception ex) { AppLog.Warning("list.editor.failed", ex); status.Text = $"Не удалось открыть {path}: {ex.Message}"; }
     }

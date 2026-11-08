@@ -1001,7 +1001,7 @@ public sealed class Updater
                 if (DateTime.UtcNow - Directory.GetCreationTimeUtc(helper) > TimeSpan.FromDays(1) && !Held(Path.Combine(helper, HelperLock)))
                     TryDelete(helper);
             foreach (var old in Directory.GetFiles(updater.directory, Path.GetFileName(updater.executable) + ".old*"))
-                try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                try { File.SetAttributes(old, FileAttributes.Normal); File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -1394,17 +1394,18 @@ public sealed class Updater
         Discard(staging);
     }
 
-    /// <summary>Test hook: runs right before the running Windows executable is replaced (its old file already kept aside).</summary>
+    /// <summary>Test hook: runs right before the new file takes the path of the running Windows executable (the old one is
+    /// already renamed aside).</summary>
     internal static Action<string>? BeforeReplace { get; set; }
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
-    private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
 
     /// <summary>
     /// Places a file in one rename: the program path always names a whole file (a copy goes to a temporary folder first). The
-    /// running Windows executable cannot be overwritten, but it can be given a second name: that hard link keeps the old file
-    /// (removed at the next start) and the new one then replaces the path atomically. Without hard links (FAT, some network
-    /// drives) the running file is renamed first, as before (Codex audit 15.10).
+    /// running Windows executable is the exception. A single-file program keeps its file mapped, and Windows then refuses to
+    /// remove or overwrite any name of it — a second hard link included (live check 07.11: --update failed «Нет доступа»
+    /// since 0.3.0.8) — but lets it be renamed. So the running file is renamed aside (removed at the next start, see Cleanup)
+    /// and the new one takes the path; a failure in between puts the old one back. Only an interruption between the two renames
+    /// leaves the path empty: the old program is then in .previous.new and under the aside name. The helper (window, background
+    /// update) runs from its own copy and replaces in one rename.
     /// </summary>
     private void Put(string from, string target, bool copy)
     {
@@ -1422,11 +1423,21 @@ public sealed class Updater
             }
             if (OperatingSystem.IsWindows() && File.Exists(target) && string.Equals(target, RunningExecutable, Comparison))
             {
-                var old = target + ".old-" + Guid.NewGuid().ToString("N");
-                if (!CreateHardLink(old, target, IntPtr.Zero)) File.Move(target, old);
-                BeforeReplace?.Invoke(target);
+                var old = target + Retired + Guid.NewGuid().ToString("N");
+                File.Move(target, old);
+                try
+                {
+                    BeforeReplace?.Invoke(target);
+                    File.Move(from, target, true);
+                }
+                catch
+                {
+                    // The original error is kept; if the old file cannot come back, Transact restores the saved copy.
+                    try { File.Move(old, target); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                    throw;
+                }
             }
-            File.Move(from, target, true);
+            else File.Move(from, target, true);
         }
         finally { if (temporary is not null) TryDelete(temporary); }
     }

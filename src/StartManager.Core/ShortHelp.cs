@@ -11,7 +11,7 @@ public sealed record ShortHelpSection(string Title, IReadOnlyList<ShortHelpLine>
 
 /// <summary>
 /// «Краткая справка» (the original's FormShortHelp, Alt+F1): the original's three sections, the keys of БазоНавигатор.
-/// Not carried over: F6 and Alt+F10/Alt+F11 (no such menus here), «Временная блокировка», Snegopat and «Проверить обновление
+/// Not carried over: F6 and Alt+F11 (no such menus here), «Временная блокировка», Snegopat and «Проверить обновление
 /// базы» (F9) — those functions are not ported.
 /// </summary>
 public static class ShortHelp
@@ -27,6 +27,7 @@ public static class ShortHelp
             new(ShortcutCommand.GoToFavorites, "Перейти к разделу «Избранное»"),
             new(ShortcutCommand.Snapshots, "Снимки списка информационных баз"),
             new(ShortcutCommand.PlatformFilter, "Отбор по версии платформы"),
+            new(ShortcutCommand.ServiceMenu, "Сервисное меню"),
         ]),
         new("Запуск информационной базы",
         [

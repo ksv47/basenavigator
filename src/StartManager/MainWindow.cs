@@ -38,9 +38,9 @@ public sealed partial class MainWindow : Window
     private TextBlock statusVersion = new(), statusSize = new(), statusClient = new(), statusTime = new();
     private double? loadSeconds;
     private TextBlock connection = new() { TextTrimming = TextTrimming.CharacterEllipsis };
-    private readonly List<Button> editingButtons = [];
-    // Buttons that change the list itself: off while the shared list is read-only.
-    private readonly HashSet<Button> listChangeButtons = [];
+    // The buttons of the table of commands (MainCommands): RefreshCommands turns each on or off by its rule.
+    private readonly Dictionary<Button, MainCommand> commandButtons = [];
+    private Button? serviceButton;
     private readonly List<Button> launchButtons = [];
     private readonly List<Button> designerButtons = [];
     // «Текущая сессия»: the client for the next start of 1С:Предприятие, not saved in the settings.
@@ -85,21 +85,24 @@ public sealed partial class MainWindow : Window
         Width = 717; Height = 590; MinWidth = 664; MinHeight = 460;
         UiTypography.FitOnScreenChanges(this);
         // The window's keys come from the table of Shortcuts (the same table «Краткая справка» lists); a key whose command
-        // is not available now (the list is being read) stays unhandled.
+        // is not available now (MainCommands: the list is being read, nothing suitable is selected) stays unhandled.
         AddHandler(KeyDownEvent, (_, e) =>
         {
-            var ready = !loadFailed && !reading;
-            System.Action? action = ShortcutKeys.Find(ShortcutScope.Window, e) switch
+            if (ShortcutKeys.Find(ShortcutScope.Window, e) is not { } command) return;
+            if (!MainCommands.CanExecute(MainCommands.Of(command), CurrentState())) { e.Handled = Refuse(MainCommands.Of(command), list: false); return; }
+            System.Action? action = command switch
             {
                 ShortcutCommand.ShortHelp => ShowShortHelp,
                 // As the original: Ctrl+Shift+F and Ctrl+Alt+F choose the search by the name or by the connection string.
                 ShortcutCommand.Search => () => FocusSearch(null),
                 ShortcutCommand.SearchByName => () => FocusSearch(SearchMode.Name),
                 ShortcutCommand.SearchByConnection => () => FocusSearch(SearchMode.Connection),
-                ShortcutCommand.Properties when ready => EditSelected,
-                ShortcutCommand.AssignVersion when ready => AssignVersion,
+                // The original's Alt+F10 «Сервисное меню».
+                ShortcutCommand.ServiceMenu => () => { if (serviceButton is { } anchor) ShowServiceMenu(anchor); },
+                ShortcutCommand.Properties => EditSelected,
+                ShortcutCommand.AssignVersion => AssignVersion,
                 ShortcutCommand.ToggleFavorite => ToggleFavorite,
-                ShortcutCommand.Snapshots when ready => ShowSnapshots,
+                ShortcutCommand.Snapshots => ShowSnapshots,
                 // The original's keys: F5 «Перечитать список баз», F12/F11 «Развернуть/Свернуть все», Ctrl+F3/Ctrl+F4 «Запустить с выбором параметров».
                 ShortcutCommand.Reload => Reload,
                 ShortcutCommand.CollapseAll => () => SetGroupsCollapsed(true),
@@ -107,8 +110,8 @@ public sealed partial class MainWindow : Window
                 // The connection link's «Открыть каталог» (Shift+F12) and «Изменить каталог» (Shift+F11).
                 ShortcutCommand.OpenFolder => OpenSelectedBaseFolder,
                 ShortcutCommand.ChangeFolder => ChangeSelectedBaseFolder,
-                ShortcutCommand.LaunchWithParameters when ready => () => _ = LaunchWithParameters(false),
-                ShortcutCommand.DesignerWithParameters when ready => () => _ = LaunchWithParameters(true),
+                ShortcutCommand.LaunchWithParameters => () => _ = LaunchWithParameters(false),
+                ShortcutCommand.DesignerWithParameters => () => _ = LaunchWithParameters(true),
                 ShortcutCommand.GoToFavorites => GoToFavorites,
                 ShortcutCommand.PlatformFilter => ShowPlatformFilter,
                 // The original's «Установить блокировку» (Ctrl+Alt+L) and «Разблокировать» (Ctrl+Alt+U) of «Свойства ▾».
@@ -148,7 +151,7 @@ public sealed partial class MainWindow : Window
         var message = status.Text;
         typography = UiTypography.From(library.Appearance);
         UiColors.Apply(library.Appearance.Theme, library.Appearance.SelectionIntensity);
-        editingButtons.Clear(); listChangeButtons.Clear();
+        commandButtons.Clear();
         launchButtons.Clear(); designerButtons.Clear();
         bases = new(); search = new(); executable = new() { Text = library.Executable };
         details = new(); status = new(); count = new(); connection = new();
@@ -162,8 +165,9 @@ public sealed partial class MainWindow : Window
         // The original's «Сервис» arrow before the heading opens the service menu.
         var service = new Button { Content = UiIcons.Create("chevron-down", typography.IconSize), Padding = new Thickness(0), MinHeight = 0,
             Background = Brushes.Transparent, BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(service, "Сервис"); ToolTip.SetTip(service, "Сервис");
+        AutomationProperties.SetName(service, MainCommands.Tip(MainCommand.ServiceMenu)); ToolTip.SetTip(service, MainCommands.Tip(MainCommand.ServiceMenu));
         service.Click += (_, _) => ShowServiceMenu(service);
+        serviceButton = service;
         heading.Children.Add(service);
         var headingText = new TextBlock { Text = "Информационные базы: 1С:Предприятие 8", FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         Grid.SetColumn(headingText, 1); heading.Children.Add(headingText);
@@ -193,22 +197,22 @@ public sealed partial class MainWindow : Window
         search.TextChanged += (_, _) => clearSearch.IsVisible = !string.IsNullOrEmpty(search.Text);
         tools.Children.Add(search);
         tools.Children.Add(Separator());
-        addButton = ToolAction("add", "Добавить базу", async () => await AddBase(), true);
-        tools.Children.Add(ListChange(addButton));
-        tools.Children.Add(ListChange(ToolAction("folder-add", "Создать новую группу", () => EditGroup(null), true)));
-        tools.Children.Add(ListChange(ToolAction("delete", "Удалить из списка", Delete, true)));
+        addButton = CommandButton(MainCommand.AddBase, "add", async () => await AddBase());
+        tools.Children.Add(addButton);
+        tools.Children.Add(CommandButton(MainCommand.AddGroup, "folder-add", () => EditGroup(null)));
+        tools.Children.Add(CommandButton(MainCommand.Delete, "delete", Delete));
         tools.Children.Add(Separator());
-        var propertiesButton = ToolAction("edit", "Свойства инф. базы · Alt+Enter", EditSelected, true);
+        var propertiesButton = CommandButton(MainCommand.Properties, "edit", EditSelected);
         // The original's «Свойства ▾» (pbActionIB): the arrow offers the actions on the base.
         var propertiesMore = new Button { Content = UiIcons.Create("chevron-down", Math.Max(10, typography.IconSize - 6)), Padding = new Thickness(0), MinHeight = 0,
             Width = Math.Max(10, typography.IconSize - 4), Height = propertiesButton.Height, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-        AutomationProperties.SetName(propertiesMore, "Меню свойств"); ToolTip.SetTip(propertiesMore, "Меню свойств");
+        AutomationProperties.SetName(propertiesMore, MainCommands.Tip(MainCommand.PropertiesMenu)); ToolTip.SetTip(propertiesMore, MainCommands.Tip(MainCommand.PropertiesMenu));
         propertiesMore.Click += (_, _) => ShowPropertiesMenu(propertiesMore);
         DimWhenDisabled(propertiesMore);
-        editingButtons.Add(propertiesMore);
+        commandButtons[propertiesMore] = MainCommand.PropertiesMenu;
         tools.Children.Add(propertiesButton); tools.Children.Add(propertiesMore);
         tools.Children.Add(Separator());
-        cacheButton = ToolAction("clear", "Очистка временных файлов (Cache)", ClearBaseCache, true);
+        cacheButton = CommandButton(MainCommand.ClearCache, "clear", ClearBaseCache);
         tools.Children.Add(cacheButton);
         tools.Children.Add(Separator());
         // The original's «8.x» text button: the filter by the platform branch (the installed versions are in «Сервис»).
@@ -216,23 +220,24 @@ public sealed partial class MainWindow : Window
         versions.Background = Brushes.Transparent; versions.BorderThickness = new Thickness(0); versions.Padding = new Thickness(4, 0);
         versions.MinHeight = 0; versions.Height = Math.Max(26, typography.IconSize + 10); versions.FontWeight = FontWeight.Bold;
         versions.Foreground = UiColors.SectionText; versions.FontSize = typography.InterfaceSize + 2; versions.VerticalContentAlignment = VerticalAlignment.Center;
-        AutomationProperties.SetName(versions, "Отбор по версии платформы"); ShowPlatformFilterState();
+        AutomationProperties.SetName(versions, MainCommands.Caption(MainCommand.PlatformFilter)); ShowPlatformFilterState();
+        commandButtons[versions] = MainCommand.PlatformFilter;
         tools.Children.Add(versions);
-        sourceTools.Children.Add(ToolAction("import", "Открыть общий список .v8i", OpenSharedList));
-        // The original's «Снимки ▾» (tbsDropDown): the snapshots of the list, the arrow offers a new one.
-        var snapshotsButton = ToolAction("snapshots", "Снимки списка информационных баз · Ctrl+L", ShowSnapshots, true);
+        // The original's «Снимки ▾» (tbsDropDown): the snapshots of the list, the arrow offers a new one. The shared list is chosen
+        // in the settings, as in the original: the toolbar has no button for it (decision of the user 08.11.2026).
+        var snapshotsButton = CommandButton(MainCommand.Snapshots, "snapshots", ShowSnapshots);
         var snapshotsMore = new Button { Content = UiIcons.Create("chevron-down", Math.Max(10, typography.IconSize - 6)), Padding = new Thickness(0), MinHeight = 0,
             Width = Math.Max(10, typography.IconSize - 4), Height = snapshotsButton.Height, Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-        AutomationProperties.SetName(snapshotsMore, "Меню снимков"); ToolTip.SetTip(snapshotsMore, "Меню снимков");
+        AutomationProperties.SetName(snapshotsMore, MainCommands.Tip(MainCommand.SnapshotsMenu)); ToolTip.SetTip(snapshotsMore, MainCommands.Tip(MainCommand.SnapshotsMenu));
         snapshotsMore.Click += (_, _) => ShowSnapshotsMenu(snapshotsMore);
         DimWhenDisabled(snapshotsMore);
-        editingButtons.Add(snapshotsMore);
+        commandButtons[snapshotsMore] = MainCommand.SnapshotsMenu;
         sourceTools.Children.Add(snapshotsButton); sourceTools.Children.Add(snapshotsMore);
         sourceTools.Children.Add(Separator());
-        sourceTools.Children.Add(ToolAction("refresh", "Перечитать список баз · F5", Reload));
+        sourceTools.Children.Add(CommandButton(MainCommand.Reload, "refresh", Reload));
         sourceTools.Children.Add(Separator());
-        sourceTools.Children.Add(ToolAction("expand-all", "Развернуть все · F12", () => SetGroupsCollapsed(false)));
-        sourceTools.Children.Add(ToolAction("collapse-all", "Свернуть все · F11", () => SetGroupsCollapsed(true)));
+        sourceTools.Children.Add(CommandButton(MainCommand.ExpandAll, "expand-all", () => SetGroupsCollapsed(false)));
+        sourceTools.Children.Add(CommandButton(MainCommand.CollapseAll, "collapse-all", () => SetGroupsCollapsed(true)));
         DockPanel.SetDock(sourceTools, Dock.Right); toolbar.Children.Add(sourceTools); toolbar.Children.Add(tools);
         Put(root, toolbar, 1);
         var body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 6 };
@@ -396,7 +401,7 @@ public sealed partial class MainWindow : Window
         copy = ToolAction("copy", "Копировать", () => ShowCopyMenu(copy!));
         infoTools.Children.Add(copy);
         // As the original's star under the list: «Перейти к Избранному» (Ctrl+J); adding and removing stay F8, Ctrl+D and the menu.
-        infoTools.Children.Add(ToolAction("star", "Перейти к Избранному · Ctrl+J", GoToFavorites));
+        infoTools.Children.Add(CommandButton(MainCommand.GoToFavorites, "star", GoToFavorites));
         Grid.SetColumn(infoTools, 1);
         infoRow.Children.Add(info); infoRow.Children.Add(infoTools); Put(root, infoRow, 3);
         AttachConnectionMenu();
@@ -462,7 +467,7 @@ public sealed partial class MainWindow : Window
             if (row?.Content is LibraryRow { Entry: { } entry }) { DoubleClickEntry(entry); e.Handled = true; }
         };
         search.Text = query;
-        EnableEditing(!loadFailed && !reading);
+        RefreshCommands();
         BuildRows(selected); status.Text = message;
         RefreshShortHelp();
     }
@@ -529,9 +534,16 @@ public sealed partial class MainWindow : Window
         sessionItems.IsVisible = !compact; sessionChoice.IsVisible = compact;
     }
 
-    private Button ToolAction(string icon, string label, System.Action action, bool edits = false)
+    // A toolbar button of the table of commands: the hint with the key, on or off by the command's rule (RefreshCommands).
+    private Button CommandButton(MainCommand command, string icon, System.Action action)
     {
-        var button = Action(label, action, edits);
+        var button = ToolAction(icon, MainCommands.Tip(command), action);
+        commandButtons[button] = command;
+        return button;
+    }
+    private Button ToolAction(string icon, string label, System.Action action)
+    {
+        var button = Action(label, action);
         button.Content = UiIcons.Create(icon, typography.IconSize); button.Width = button.Height = Math.Max(26, typography.IconSize + 10); button.MinHeight = 0;
         button.Padding = new Thickness(3); button.Background = Brushes.Transparent; button.BorderThickness = new Thickness(0);
         DimWhenDisabled(button);
@@ -573,19 +585,16 @@ public sealed partial class MainWindow : Window
         var items = new List<Control>();
         // As the original's actV8EnterpriseWithLogin / actV8ConfigWithLogin: /WA- and the 1C login window.
         // The original's order: «Запустить с выбором параметров» (Ctrl+F3/F4), «Запустить с аутентификацией», «Запустить от имени администратора».
-        var parameters = new MenuItem { Header = MenuHeader("Запустить с выбором параметров", designer ? "Ctrl+F4" : "Ctrl+F3"), Classes = { "scaled" } };
-        AutomationProperties.SetName(parameters, "Запустить с выбором параметров");
-        parameters.Click += async (_, _) => await LaunchWithParameters(designer);
-        items.Add(parameters);
-        var login = new MenuItem { Header = MenuHeader("Запустить с аутентификацией", designer ? "Shift+F4" : "Shift+F3"), Classes = { "scaled" } };
-        AutomationProperties.SetName(login, "Запустить с аутентификацией");
+        // The caption, key and availability of the table (a configurator has none for a web base); a click checks it again.
+        var state = CurrentState();
+        items.Add(CommandItem(designer ? MainCommand.DesignerWithParameters : MainCommand.LaunchWithParameters, state,
+            () => _ = LaunchWithParameters(designer)));
+        var login = CommandItem(designer ? MainCommand.DesignerWithLogin : MainCommand.LaunchWithLogin, state, () => LaunchWithLogin(designer));
         ToolTip.SetTip(login, "1С запросит имя пользователя и пароль в своём окне входа. БазоНавигатор пароль не получает и не хранит.");
-        login.Click += (_, _) => LaunchWithLogin(designer);
         items.Add(login);
         if (OperatingSystem.IsWindows()) items.Add(admin);
         // As the original's mItemWebOpen: shown for a base on a web server only.
         var web = (bases.SelectedItem as LibraryRow)?.Entry is { Kind: ConnectionKind.Web };
-        parameters.IsEnabled = login.IsEnabled = !designer || !web;
         if (!designer && web)
         {
             if (items.Count > 0) items.Add(new Separator());
@@ -617,7 +626,7 @@ public sealed partial class MainWindow : Window
     private void LaunchWithLogin(bool designer)
     {
         if (Selected() is not { } entry) return;
-        if (designer && entry.Kind == ConnectionKind.Web) { status.Text = "Конфигуратор не подключается к базе на веб-сервере. Откройте её в 1С:Предприятии или в браузере."; return; }
+        if (designer && entry.Kind == ConnectionKind.Web) { status.Text = MainCommands.WebDesignerText; return; }
         LaunchEntry(entry, designer, options: LaunchOptions.Login);
     }
 
@@ -705,24 +714,23 @@ public sealed partial class MainWindow : Window
     }
 
     private static void Put(Grid grid, Control control, int row) { Grid.SetRow(control, row); grid.Children.Add(control); }
-    private Button Action(string text, System.Action action, bool edits = false)
+    private Button Action(string text, System.Action action)
     {
         var button = new Button { Content = text, Padding = new Thickness(6, 3), MinHeight = 26, Background = UiColors.Button, BorderBrush = UiColors.Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(0), HorizontalAlignment = HorizontalAlignment.Stretch };
         button.Click += (_, _) => action();
-        if (edits) editingButtons.Add(button);
         return button;
     }
     // An asynchronous action: an error it does not handle itself is shown, not left to end the program (Codex full audit 24.10, P2-7).
-    private Button Action(string text, Func<Task> action, bool edits = false)
+    private Button Action(string text, Func<Task> action)
     {
         Button button = null!;
-        button = Action(text, () => SettingsWindow.Guarded(button, text, action), edits);
+        button = Action(text, () => SettingsWindow.Guarded(button, text, action));
         return button;
     }
     private BaseEntry? Selected()
     {
         var selected = (bases.SelectedItem as LibraryRow)?.Entry;
-        if (selected is null) status.Text = "Сначала выберите базу в списке.";
+        if (selected is null) status.Text = MainCommands.SelectBaseText;
         return selected;
     }
     private void Refresh(Guid? select = null)
@@ -836,6 +844,7 @@ public sealed partial class MainWindow : Window
     private void ShowDetails()
     {
         UpdateStatusPanels();
+        RefreshCommands();
         var selected = bases.SelectedItem as LibraryRow;
         var item = selected?.Entry;
         // The link of a file base opens its folder, as the original's lbConnect.
@@ -847,7 +856,7 @@ public sealed partial class MainWindow : Window
         if (selected is { Orphan: { } cache })
         {
             details.Text = "Кэш отсутствующей конфигурации · " + FormatSize(cache.Size);
-            connection.Text = "Ни одна известная база не использует этот ID · Delete — удалить кэш · " + string.Join(" · ", cache.Folders);
+            connection.Text = "Ни одна известная база не использует этот ID · Del — удалить кэш · " + string.Join(" · ", cache.Folders);
             ToolTip.SetTip(connection, string.Join("\n", cache.Folders)); return;
         }
         if (selected is { Section: LibrarySection.Orphans })
@@ -889,7 +898,7 @@ public sealed partial class MainWindow : Window
         (updateNotice is not null ? updateNotice + " · " : "") +
         (sharedList?.MarkerNotice is { } marker ? marker + " · " : "") +
         (store.RelocationWarning is { } relocation ? relocation + " · " : "") +
-        (sharedList is null ? "Локальный список · кнопка списка — открыть общий .v8i" : $"Общий список: {library.ListPath.Replace("\0", "\\0")} · неподдерживаемых записей: {sharedList.Warnings.Count}") +
+        (sharedList is null ? "Локальный список · общий .v8i выбирается в настройках" : $"Общий список: {library.ListPath.Replace("\0", "\\0")} · неподдерживаемых записей: {sharedList.Warnings.Count}") +
         CommonDescription() +
         (listOverrideActive ? " · --list: только этот сеанс" : "") +
         (library.Appearance.LoadWarning is { } warning ? " · " + warning : "") +
@@ -900,7 +909,7 @@ public sealed partial class MainWindow : Window
         if (reading || closed) return;
         if (!await ResolvePendingProfile() || closed) return;
         reading = true; loadFailed = true; infoGeneration++;
-        foreach (var button in editingButtons.Concat(launchButtons)) button.IsEnabled = false;
+        DisableCommands();
         status.Text = "Загрузка списка…";
         var path = store.PathName;
         var currentList = sharedList is null ? "" : library.ListPath;
@@ -943,7 +952,7 @@ public sealed partial class MainWindow : Window
             store = refreshedStore; sharedList = refreshedList; commonLists = loadedCommon;
             if (commonLists.Lists.Any(x => x.Problem is not null)) AppLog.Warning("common_lists.not_loaded");
             executable.Text = library.Executable;
-            loadFailed = false; EnableEditing(true);
+            loadFailed = false;
             RebuildInterface(); Refresh(); status.Text = SourceDescription();
             if (await LoadActivity() && !viewRestored) RestoreView();
         }
@@ -954,34 +963,84 @@ public sealed partial class MainWindow : Window
             if (closed) return;
             commonLists = CommonLoad.Empty;
             if (initial && settingsSnapshot is not null) { library = settingsSnapshot; sharedList = refreshedList; RebuildInterface(); }
-            loadFailed = true; EnableEditing(false);
+            loadFailed = true; RefreshCommands();
             status.Text = $"Редактирование отключено. Список не загружен: {LegacyImport.ErrorMessage(ex)}";
         }
         finally
         {
             reading = false;
-            if (!closed) { EnableEditing(!loadFailed); ShowDetails(); }
+            if (!closed) ShowDetails();
         }
         if (interrupted is not null) await OfferInterruptedRecovery(interrupted, reload: true);
     }
     private void BeginWriting(string message)
     {
         reading = writing = true; loadFailed = true; infoGeneration++;
-        foreach (var button in editingButtons.Concat(launchButtons)) button.IsEnabled = false;
+        DisableCommands();
         status.Text = message;
     }
     private void EndWriting(bool failedBefore)
     {
         reading = writing = false; loadFailed = failedBefore;
         if (closed) return;
-        EnableEditing(!loadFailed && !reading);
         ShowDetails();
     }
     private string? ReadOnlyList => sharedList?.ReadOnly;
-    private Button ListChange(Button button) { listChangeButtons.Add(button); return button; }
-    private void EnableEditing(bool enabled)
+    // The state the commands of the toolbar, the menus and the keys depend on (MainCommands).
+    private CommandState CurrentState()
     {
-        foreach (var button in editingButtons) button.IsEnabled = enabled && (ReadOnlyList is null || !listChangeButtons.Contains(button));
+        var row = bases.SelectedItem as LibraryRow;
+        var selection = row switch
+        {
+            null => SelectionKind.None,
+            { Orphan: not null } => SelectionKind.Orphan,
+            { Section: LibrarySection.Orphans } => SelectionKind.Orphans,
+            { Section: not LibrarySection.None } => SelectionKind.None,
+            { Entry: not null, FavoriteShortcut: true } => SelectionKind.FavoriteShortcut,
+            { Entry: not null } => SelectionKind.Base,
+            _ => SelectionKind.Group
+        };
+        var group = selection == SelectionKind.Group ? row!.Group : null;
+        // A base of a common list and a group only such bases are in are started and viewed, never changed.
+        var own = row?.Entry is { } entry ? CommonOf(entry) is null
+            : group is not null && Groups.All(library).Contains(group, StringComparer.OrdinalIgnoreCase);
+        return new(!loadFailed, reading, ReadOnlyList is not null, selection, own, row?.Entry?.Kind,
+            group is not null && Groups.Folder(library, group).Length > 0, clearingOrphans);
+    }
+    // A key of an unavailable command: its reason goes to the status line as the action said it before (MainCommands.Refusal);
+    // nothing opens. A key of the list says nothing without a base, as before. Returns whether a reason was said.
+    private bool Refuse(MainCommand command, bool list)
+    {
+        var refusal = MainCommands.Refusal(command, CurrentState());
+        if (refusal == CommandRefusal.None || list && refusal == CommandRefusal.SelectBase) return false;
+        var row = bases.SelectedItem as LibraryRow;
+        switch (refusal)
+        {
+            case CommandRefusal.ReadOnlyList: return ListLocked();
+            case CommandRefusal.CommonBase: return CommonLocked(row?.Entry);
+            case CommandRefusal.CommonGroup: return row is not null && CommonGroupLocked(row.Group);
+            case CommandRefusal.GroupFolder: if (row is null) return false; status.Text = GroupWithoutFolder(row.Group); return true;
+            default: status.Text = MainCommands.RefusalText(refusal); return true;
+        }
+    }
+    private static string GroupWithoutFolder(string group) => $"У группы «{group}» не указан каталог (свойства группы, «Каталог:»).";
+    private void RefreshCommands()
+    {
+        var state = CurrentState();
+        foreach (var (button, command) in commandButtons)
+        {
+            button.IsEnabled = MainCommands.CanExecute(command, state);
+            // The hint follows the row (Delete on a favorite shortcut); «8.x» shows its filter itself (ShowPlatformFilterState).
+            if (command == MainCommand.PlatformFilter) continue;
+            var tip = MainCommands.Tip(command, state);
+            if (!Equals(ToolTip.GetTip(button), tip)) { ToolTip.SetTip(button, tip); AutomationProperties.SetName(button, tip); }
+        }
+    }
+    // The list is being read or written: the commands follow the state, the launch buttons wait.
+    private void DisableCommands()
+    {
+        RefreshCommands();
+        foreach (var button in launchButtons) button.IsEnabled = false;
     }
     // A change of the list itself while it is read-only: the reason goes to the status line and nothing opens.
     // Properties stay available: the local settings of a base are saved, a change of the list is refused on saving.
@@ -1012,7 +1071,7 @@ public sealed partial class MainWindow : Window
         {
             AppLog.Error("profile.retry.failed", ex);
             status.Text = "Локальные настройки ещё не записаны: " + LegacyImport.ErrorMessage(ex) +
-                " Изменения остаются в памяти. Устраните причину и нажмите «Обновить список» для повторной записи.";
+                " Изменения остаются в памяти. Устраните причину и нажмите «Перечитать список баз» для повторной записи.";
             return false;
         }
         finally { EndWriting(failedBefore); }
@@ -1063,13 +1122,13 @@ public sealed partial class MainWindow : Window
             {
                 library = sharedSaved; profilePending = true; Refresh();
                 status.Text = "Общий список сохранён, но локальные настройки не записаны: " + LegacyImport.ErrorMessage(ex) +
-                    " Изменения остаются в памяти. Повторите сохранение или нажмите «Обновить список» после устранения причины.";
+                    " Изменения остаются в памяти. Повторите сохранение или нажмите «Перечитать список баз» после устранения причины.";
             }
             else status.Text = $"Не удалось сохранить: {LegacyImport.ErrorMessage(ex)}";
             // Both the write and its rollback failed: the store no longer knows the file, editing waits for a new load,
             // which finds the marker and offers the recovery.
             lost = sharedList?.Lost == true;
-            if (lost) status.Text += " Редактирование отключено; нажмите «Обновить список».";
+            if (lost) status.Text += " Редактирование отключено; нажмите «Перечитать список баз».";
             // A marker of another window's unfinished write turned up while the changed list was read again:
             // the same offer as on loading, not only its reason.
             if (ex is InterruptedWriteException interrupted)
@@ -1347,38 +1406,6 @@ public sealed partial class MainWindow : Window
         await dialog.ShowDialog(this);
         RestoreListFocus();
     }
-    private async void OpenSharedList()
-    {
-        if (reading || closed) return;
-        if (!await ResolvePendingProfile() || closed) return;
-        reading = true;
-        var failedBefore = loadFailed;
-        InterruptedWriteException? interrupted = null;
-        try
-        {
-            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "Открыть общий список — изменения сохраняются прямо в .v8i", AllowMultiple = false, FileTypeFilter = [new FilePickerFileType("Список 1С") { Patterns = ["*.v8i"] }] });
-            if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path) return;
-            if (closed) return;
-            reading = true; loadFailed = true; infoGeneration++;
-            foreach (var button in editingButtons.Concat(launchButtons)) button.IsEnabled = false;
-            status.Text = "Загрузка общего списка…";
-            var candidate = new V8iStore(path);
-            var baseline = LibrarySources.Select(library, store.PathName, path);
-            var next = await Task.Run(() => candidate.Load(baseline));
-            if (closed) return;
-            writing = true;
-            await Task.Run(() => store.Save(next));
-            if (closed) return;
-            library = next; sharedList = candidate; loadFailed = false;
-            listOverrideActive = false;
-            EnableEditing(true);
-            search.Text = ""; collapsed.Clear(); collapsedSections.Clear(); Refresh(); status.Text = SourceDescription();
-        }
-        catch (Exception ex) { interrupted = ex as InterruptedWriteException; if (!closed) { loadFailed = failedBefore; status.Text = $"Список не открыт: {LegacyImport.ErrorMessage(ex)}"; } }
-        finally { reading = writing = false; if (!closed) { EnableEditing(!loadFailed); ShowDetails(); } }
-        // The open list stays; the other one is put right and opened again by the user.
-        if (interrupted is not null) await OfferInterruptedRecovery(interrupted, reload: false);
-    }
     private async void Delete()
     {
         if (bases.SelectedItem is LibraryRow { Orphan: { } orphan }) { ClearOrphans([orphan]); return; }
@@ -1427,19 +1454,19 @@ public sealed partial class MainWindow : Window
     {
         if (Selected() is not { } entry) return;
         // F4 and other paths to the configurator: the buttons are disabled, a key gets the reason in the status line.
-        if (designer && entry.Kind == ConnectionKind.Web) { status.Text = "Конфигуратор не подключается к базе на веб-сервере. Откройте её в 1С:Предприятии или в браузере."; return; }
+        if (designer && entry.Kind == ConnectionKind.Web) { status.Text = MainCommands.WebDesignerText; return; }
         LaunchEntry(entry, designer);
     }
     // browser: the original's «Открыть в web-браузере»; it is recorded in the history like a start of 1С:Предприятие.
     private async void LaunchEntry(BaseEntry entry, bool designer, bool elevated = false, bool browser = false, LaunchOptions? options = null)
     {
-        if (loadFailed || reading || closed) { if (!closed) status.Text = "Список занят или не загружен. Дождитесь завершения операции."; return; }
+        if (loadFailed || reading || closed) { if (!closed) status.Text = MainCommands.BusyText; return; }
         // «Перед запуском ИБ проверять версию Агента сервера»: the question comes before anything starts; the base may get a new version.
         if (!browser)
         {
             if (await CheckServerAgent(entry, designer, options) is not { } checkedEntry) return;
             entry = checkedEntry;
-            if (loadFailed || reading || closed) { if (!closed) status.Text = "Список занят или не загружен. Дождитесь завершения операции."; return; }
+            if (loadFailed || reading || closed) { if (!closed) status.Text = MainCommands.BusyText; return; }
         }
         var snapshot = library; var source = SourceOf(entry); var persistent = PersistentIdentity(entry);
         var launched = false; var historySaved = false; var declined = false;
@@ -1474,7 +1501,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { AppLog.Error("launch.failed", ex); status.Text = $"Ошибка запуска: {Core.Launcher.ErrorMessage(ex)}"; }
         finally { EndWriting(false); }
         if (!launched && !declined && !closed) await ShowLaunchError(status.Text ?? "");
-        if (profilePending) status.Text += " Локальные настройки ещё не записаны; нажмите «Обновить список» для повторной записи.";
+        if (profilePending) status.Text += " Локальные настройки ещё не записаны; нажмите «Перечитать список баз» для повторной записи.";
         if (launched && historySaved && !profilePending)
         {
             if (snapshot.AfterLaunch == AfterLaunchAction.Minimize) WindowState = WindowState.Minimized;
@@ -1963,7 +1990,7 @@ internal sealed class BaseDialog : Window
             "не отключаются; без кода разрешения новые сеансы не открываются."));
         var lockPage = DialogLayout.Section("Установка блокировки информационной базы", lockBody);
         var lockUnavailable = DialogLayout.Section("Установка блокировки информационной базы",
-            DialogLayout.Label("Блокировка доступна только для файлового варианта информационной базы."));
+            DialogLayout.Label(MainCommands.SetLockKindText));
         // The original's page «Резервное копирование» (smFormProperty.dfm:1048-1140): «Сценарий:», «Каталог:», «Префикс:» — local to this
         // program, like the comment. Without readable scenarios the choice is kept as it is and cannot be changed.
         var scenarioChoices = BackupScenarioEdit.Choices(backupScenarios?.Scenarios ?? [], backupScenarios is null ? null : entry?.BackupScriptId);

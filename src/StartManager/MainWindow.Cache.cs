@@ -37,7 +37,7 @@ public sealed partial class MainWindow
     {
         if (closed || cacheButton is null) return;
         if (cacheBusy) { status.Text = "Очистка временных файлов ещё выполняется."; return; }
-        if (loadFailed || reading) { status.Text = "Список занят или не загружен. Дождитесь завершения операции."; return; }
+        if (loadFailed || reading) { status.Text = MainCommands.BusyText; return; }
         var roots = BaseCacheRoots.Current;
         // Layout of FormCLearCache.dfm: bold title and a close button; on the left the accounts; on the right the tabs,
         // the platform version, two check boxes and two buttons with brushes; a hint line at the bottom.

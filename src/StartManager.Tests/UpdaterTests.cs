@@ -1566,30 +1566,121 @@ public sealed class UpdaterTests : IDisposable
         Assert.Equal("old program", Read(Exe));
     }
 
-    [Fact] public void RunningWindowsExecutableIsReplacedWithoutAMomentWithoutIt()
+    [Fact] public void RunningWindowsExecutableIsRenamedAsideAndPutBackOnFailure()
     {
         if (!OperatingSystem.IsWindows()) return;
         Package(Good);
         var main = Path.Combine(app, Exe);
         var seen = new List<string>();
-        // The direct command line replaces the running executable: at the last moment before the replacement the program path
-        // still names a whole program, and the old file is kept under a second name.
+        // The direct command line replaces the running executable: it is renamed aside first (Windows lets a running file be
+        // renamed only), then the new file takes the path.
         Updater.BeforeReplace = target =>
         {
-            seen.Add(File.ReadAllText(target));
+            seen.Add(File.Exists(target) ? "present" : "aside");
             seen.Add(File.ReadAllText(Assert.Single(Directory.GetFiles(app, Exe + ".old-*"))));
         };
         try { Create().Install(Release, Current, Runtime, true); }
         finally { Updater.BeforeReplace = null; }
-        Assert.Equal(["old program", "old program"], seen);
+        Assert.Equal(["aside", "old program"], seen);
         Assert.Equal("new program", Read(Exe));
-        // Interrupted right there: the path still holds the old program, so the next start can repair (here the undo restores it).
+        Updater.Cleanup(app, main);
+        // The new file cannot take the path: the old one comes back, nothing is left aside and nothing changed.
         Restart();
-        Updater.BeforeReplace = _ => throw new IOException("power off");
+        Updater.BeforeReplace = _ => throw new IOException("disk full");
         try { Assert.Throws<IOException>(() => Create().Rollback(Next)); }
         finally { Updater.BeforeReplace = null; }
         Assert.Equal("new program", File.ReadAllText(main));
+        Assert.Empty(Directory.GetFiles(app, Exe + ".old*"));
         Assert.False(Updater.ChangedInThisProcess);
+    }
+
+    /// <summary>
+    /// The file as a running single-file .NET program holds its own executable: mapped as data, with a handle that lets it be
+    /// renamed. Windows then refuses to remove or overwrite any name of it, a second hard link included.
+    /// </summary>
+    private static IDisposable MapAsRunning(string path)
+    {
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var map = System.IO.MemoryMappedFiles.MemoryMappedFile.CreateFromFile(stream, null, 0,
+            System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read, HandleInheritability.None, false);
+        return new Mapped(map.CreateViewAccessor(0, 0, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read), map);
+    }
+
+    private sealed class Mapped(IDisposable view, IDisposable map) : IDisposable
+    {
+        public void Dispose() { view.Dispose(); map.Dispose(); }
+    }
+
+    [Fact] public void RunningSingleFileWindowsExecutableIsReplacedFromTheCommandLine()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Package(Good);
+        var main = Path.Combine(app, Exe);
+        // Live check 07.11: --update failed «Нет доступа к файлу или папке» and left the copy on the old version.
+        using (MapAsRunning(main))
+        {
+            Create().Install(Release, Current, Runtime, true);
+            Assert.Equal("new program", Read(Exe));
+            // The running file is kept under a second name while it runs; it goes at the next start.
+            Assert.Equal("old program", File.ReadAllText(Assert.Single(Directory.GetFiles(app, Exe + ".old-*"))));
+        }
+        Assert.Equal("0.2.0.20", Create().PreviousVersion);
+        Updater.Cleanup(app, main);
+        Assert.Empty(Directory.GetFiles(app, Exe + ".old*"));
+        // The command-line rollback replaces the running new program the same way.
+        Restart();
+        using (MapAsRunning(main)) Assert.Equal("0.2.0.20", Create().Rollback(Next));
+        Assert.Equal("old program", Read(Exe));
+    }
+
+    [Fact] public void RunningSingleFileWindowsExecutableComesBackWhenALaterFileFails()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Package(Good);
+        var main = Path.Combine(app, Exe);
+        var icon = Path.Combine(app, "Assets", "basenavigator.png");
+        string[] kept = [Exe, Path.Combine("Assets", "basenavigator.png"), Path.Combine("Settings", "library.json"), "BaseNavigator.portable"];
+        var before = kept.ToDictionary(x => x, x => File.ReadAllBytes(Path.Combine(app, x)));
+        var replaced = new List<string>();
+        // Codex audit 08.11 (P3): the running file is already aside and the new one in place when the next file of the package
+        // fails; the restore puts the old program back through the same rename aside.
+        File.SetAttributes(icon, FileAttributes.ReadOnly);
+        Updater.BeforeReplace = target => replaced.Add(Path.GetFileName(target));
+        try
+        {
+            using (MapAsRunning(main))
+            {
+                Assert.ThrowsAny<Exception>(() => Create().Install(Release, Current, Runtime, true));
+                Assert.Equal([Exe, Exe], replaced);
+                Assert.All(kept, x => Assert.Equal(before[x], File.ReadAllBytes(Path.Combine(app, x))));
+                Assert.False(File.Exists(Path.Combine(app, "Start-with-log.cmd")));
+                Assert.False(File.Exists(Path.Combine(app, "THIRD-PARTY-NOTICES.txt")));
+                Assert.False(Directory.Exists(Path.Combine(app, ".previous.new")));
+                Assert.False(Directory.Exists(Path.Combine(app, Updater.ArchiveFolder)));
+                Assert.False(Updater.ChangedInThisProcess);
+                // The running original stays aside while it is mapped; the cleanup leaves it and removes the rest.
+                Updater.Cleanup(app, main);
+                Assert.Equal(before[Exe], File.ReadAllBytes(Assert.Single(Directory.GetFiles(app, Exe + ".old-*"))));
+                Assert.Equal(before[Exe], File.ReadAllBytes(main));
+            }
+        }
+        finally { Updater.BeforeReplace = null; File.SetAttributes(icon, FileAttributes.Normal); }
+        Updater.Cleanup(app, main);
+        Assert.Empty(Directory.GetFiles(app, Exe + ".old*"));
+        Assert.All(kept, x => Assert.Equal(before[x], File.ReadAllBytes(Path.Combine(app, x))));
+    }
+
+    [Fact] public void ReadOnlyLeftoverOfTheRunningProgramIsRemoved()
+    {
+        var main = Path.Combine(app, Exe);
+        var old = Path.Combine(app, Exe + ".old-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(old, "old program");
+        // Grok audit 08.11 (P3): a read-only copy aside stayed for good and each update added one more full copy of the program.
+        File.SetAttributes(old, FileAttributes.ReadOnly);
+        try { Updater.Cleanup(app, main); }
+        finally { if (File.Exists(old)) File.SetAttributes(old, FileAttributes.Normal); }
+        Assert.False(File.Exists(old));
+        Assert.Equal("old program", Read(Exe));
     }
 
     [Fact] public void HelperReplacesTheProgramFileInOneRename()

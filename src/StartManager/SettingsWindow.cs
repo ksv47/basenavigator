@@ -1057,7 +1057,7 @@ internal sealed class SettingsWindow : Window
             ScenarioReport($"Сценарий «{chosen.Name}» назначен основным.", false);
         }));
         refresh = Command("Обновить", async () => { if (!working) await Load(Chosen()?.Id); });
-        ToolTip.SetTip(create, "Добавить сценарий · Insert"); ToolTip.SetTip(edit, "Изменить сценарий · Enter"); ToolTip.SetTip(remove, "Удалить сценарий · Delete");
+        ToolTip.SetTip(create, "Добавить сценарий · Ins"); ToolTip.SetTip(edit, "Изменить сценарий · Enter"); ToolTip.SetTip(remove, "Удалить сценарий · Del");
         ToolTip.SetTip(setMain, "Установить использование по умолчанию"); ToolTip.SetTip(refresh, "Перечитать");
         list.SelectionChanged += (_, _) => ShowChosen();
         list.DoubleTapped += (_, e) =>

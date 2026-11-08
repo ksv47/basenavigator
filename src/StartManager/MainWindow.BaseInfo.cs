@@ -13,7 +13,7 @@ public sealed partial class MainWindow
     private async void ShowBaseInfo()
     {
         if (loadFailed || reading || closed) return;
-        if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) { status.Text = "Выберите информационную базу."; return; }
+        if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) { status.Text = MainCommands.ChooseBaseText; return; }
         var common = CommonOf(entry);
         information.TryGetValue(entry.Id, out var data);
         var platform = data is null ? "Определяется…" : (data.Release.Length > 0 ? data.Release : data.Platform) +

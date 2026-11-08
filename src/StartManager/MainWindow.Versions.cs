@@ -17,31 +17,32 @@ public sealed partial class MainWindow
     private void ShowPropertiesMenu(Control anchor)
     {
         var menu = ClassicMenu("Свойства");
-        var row = bases.SelectedItem as LibraryRow;
-        var ready = !loadFailed && !reading;
-        var backup = ready && row is { Orphan: null } && BackupCommands.Applies(row.Entry);
-        MenuItem Item(string label, string gesture, bool enabled, System.Action action)
+        var state = CurrentState();
+        MenuItem Command(MainCommand command, System.Action action, string? caption = null) => CommandItem(command, state, action, "edit", caption);
+        // The loads from a file are not in the table (no key): the availability of the backup commands.
+        MenuItem Load(string label, BackupFormat format)
         {
-            var item = new MenuItem { Header = MenuHeader(label, gesture), Icon = UiIcons.Create("edit", typography.IconSize), Classes = { "scaled" }, IsEnabled = enabled };
-            AutomationProperties.SetName(item, label); AutomationProperties.SetAcceleratorKey(item, gesture);
-            item.Click += (_, _) => action(); return item;
+            var item = new MenuItem { Header = MenuHeader(label, ""), Icon = UiIcons.Create("edit", typography.IconSize), Classes = { "scaled" },
+                IsEnabled = MainCommands.CanExecute(MainCommand.Backup, state) };
+            AutomationProperties.SetName(item, label);
+            item.Click += (_, _) => LoadSelected(format); return item;
         }
         menu.ItemsSource = new Control[]
         {
-            Item("Свойства информационной базы…", "Alt+Enter", ready && row?.Entry is not null, EditSelected), new Separator(),
-            Item("Назначить версию…", "Shift+Ctrl+F8", ready && ReadOnlyList is null && CommonOf(row?.Entry) is null &&
-                row is { Entry: not null } or { Section: LibrarySection.None, Orphan: null }, AssignVersion),
+            // Ours before the original's items: the properties of the base or, as the toolbar button and Alt+Enter, of the group.
+            Command(MainCommand.Properties, EditSelected, state.Selection == SelectionKind.Group ? "Свойства группы…" : null), new Separator(),
+            Command(MainCommand.AssignVersion, AssignVersion),
             new Separator(),
             // As the original: the lock items for a file base; setting opens the «Блокировка» page of the properties.
-            Item("Установить блокировку информационной базы…", "Ctrl+Alt+L", ready && row is { Orphan: null, Entry.Kind: ConnectionKind.File }, SetSelectedLock),
-            Item("Разблокировать информационную базу…", "Ctrl+Alt+U", ready && row is { Orphan: null, Entry.Kind: ConnectionKind.File } && CommonOf(row.Entry) is null, RemoveSelectedLock),
+            Command(MainCommand.SetLock, SetSelectedLock),
+            Command(MainCommand.RemoveLock, RemoveSelectedLock),
             new Separator(),
             // The original's backup items (pbActionIB): a file or a server base; a web base has no configurator to connect.
-            Item("Выгрузить резервную копию данных…", "Shift+Ctrl+F5", backup, BackupSelected),
-            Item("Загрузить данные из резервной копии…", "Shift+Ctrl+F7", backup, ShowBackupList),
+            Command(MainCommand.Backup, BackupSelected),
+            Command(MainCommand.RestoreBackup, ShowBackupList),
             new Separator(),
-            Item("Загрузить информационную базу из файла (*.dt)…", "", backup, () => LoadSelected(BackupFormat.Dt)),
-            Item("Загрузить конфигурацию из файла (*.cf)…", "", backup, () => LoadSelected(BackupFormat.Cf)),
+            Load("Загрузить информационную базу из файла (*.dt)…", BackupFormat.Dt),
+            Load("Загрузить конфигурацию из файла (*.cf)…", BackupFormat.Cf),
         };
         menu.Placement = Avalonia.Controls.PlacementMode.BottomEdgeAlignedLeft;
         menu.Closed += (_, _) => RestoreListFocus();
@@ -60,7 +61,7 @@ public sealed partial class MainWindow
     private async void RemoveSelectedLock()
     {
         if (loadFailed || reading || closed || bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) return;
-        if (entry.Kind != ConnectionKind.File) { status.Text = "Снятие блокировки возможно только для файлового варианта информационной базы."; return; }
+        if (entry.Kind != ConnectionKind.File) { status.Text = MainCommands.FileLockText; return; }
         if (CommonLocked(entry)) return;
         var folder = entry.Location; var path = InfobaseLock.PathIn(folder);
         string? raw;

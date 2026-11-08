@@ -138,7 +138,7 @@ public sealed partial class MainWindow
         if (reading || closed) return;
         var failedBefore = loadFailed;
         reading = true; loadFailed = true;
-        foreach (var button in editingButtons.Concat(launchButtons)) button.IsEnabled = false;
+        DisableCommands();
         bool loaded;
         try { loaded = await LoadActivity(); }
         finally { EndWriting(failedBefore); }

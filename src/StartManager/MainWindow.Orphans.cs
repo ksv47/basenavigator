@@ -47,15 +47,18 @@ public sealed partial class MainWindow
         return row;
     }
 
-    private MenuItem[] OrphanMenu(LibraryRow target, Func<string, string, string?, bool, System.Action, MenuItem> item)
+    // The removal is the command Delete of the table (its key and availability), with the state of the removal itself.
+    private MenuItem[] OrphanMenu(LibraryRow target, CommandState state, Func<string, string, string?, bool, System.Action, MenuItem> item)
     {
+        var key = MainCommands.KeyText(MainCommand.Delete);
+        var removable = MainCommands.CanExecute(MainCommand.Delete, state);
         if (target.Orphan is { } orphan)
             return
             [
-                item("Удалить кэш конфигурации…", "delete", "Delete", !clearingOrphans, () => ClearOrphans([orphan])),
+                item("Удалить кэш конфигурации…", "delete", key, removable, () => ClearOrphans([orphan])),
                 item("Открыть каталог", "folder", null, true, () => OpenOrphanFolder(orphan)),
             ];
-        return [item("Удалить весь кэш отсутствующих конфигураций…", "delete", "Delete", !clearingOrphans && orphans.Count > 0, () => ClearOrphans(orphans))];
+        return [item("Удалить весь кэш отсутствующих конфигураций…", "delete", key, removable && orphans.Count > 0, () => ClearOrphans(orphans))];
     }
 
     private async void OpenOrphanFolder(OrphanCacheEntry orphan)
@@ -70,7 +73,8 @@ public sealed partial class MainWindow
     private async void ClearOrphans(IReadOnlyList<OrphanCacheEntry> chosen)
     {
         if (clearingOrphans || closed || chosen.Count == 0) return;
-        clearingOrphans = true;
+        // The toolbar, the menus and Del follow the removal from its question to its end, cancelled or failed too.
+        clearingOrphans = true; RefreshCommands();
         try
         {
             var total = chosen.Sum(x => x.Size);
@@ -101,6 +105,6 @@ public sealed partial class MainWindow
             await RefreshOrphans(library);
         }
         catch (Exception ex) { AppLog.Warning("orphans.clear.failed", ex); status.Text = "Кэш не удалён: " + LegacyImport.ErrorMessage(ex); }
-        finally { clearingOrphans = false; }
+        finally { clearingOrphans = false; if (!closed) RefreshCommands(); }
     }
 }

@@ -24,9 +24,9 @@ public sealed partial class MainWindow
         AutomationProperties.SetName(searchBases, "Поиск информационных баз на компьютере");
         searchBases.Click += (_, _) => SearchBasesOnComputer();
         // As the original: the folders of 1C, the list, finding a base, the installed versions, the search, ending the processes.
-        MenuItem Plain(string label, System.Action action, string? gesture = null)
+        MenuItem Plain(string label, System.Action action)
         {
-            var item = new MenuItem { Header = MenuHeader(label, gesture), Classes = { "scaled" } };
+            var item = new MenuItem { Header = MenuHeader(label), Classes = { "scaled" } };
             AutomationProperties.SetName(item, label.TrimEnd('…')); item.Click += (_, _) => action(); return item;
         }
         var roots = BaseCacheRoots.Current;
@@ -39,7 +39,7 @@ public sealed partial class MainWindow
             new Separator(), ListMenu(), FindInListMenu(), new Separator(), Plain("Список установленных версий 1С:Предприятие 8", OpenVersions),
             new Separator(), searchBases, new Separator(), kill,
             // The original opens these from its system menu (Alt+F11), which is not carried over: they end the service menu.
-            new Separator(), Plain("Краткая справка", ShowShortHelp, Shortcuts.KeysOf(ShortcutCommand.ShortHelp)[0].ToString()),
+            new Separator(), CommandItem(MainCommand.ShortHelp, CurrentState(), ShowShortHelp),
             restore, Plain("О программе…", ShowAbout)
         };
         menu.Placement = PlacementMode.BottomEdgeAlignedLeft;

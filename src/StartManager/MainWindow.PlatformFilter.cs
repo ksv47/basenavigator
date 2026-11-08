@@ -63,6 +63,7 @@ public sealed partial class MainWindow
     {
         if (platformFilterButton is not { } button) return;
         button.Content = platformFilter ?? "8.x";
-        ToolTip.SetTip(button, platformFilter is null ? "Отбор по версии платформы · Alt+F8" : $"Отбор: 1С:Предприятие {platformFilter} · Alt+F8");
+        ToolTip.SetTip(button, platformFilter is null ? MainCommands.Tip(MainCommand.PlatformFilter)
+            : $"Отбор: 1С:Предприятие {platformFilter} · {MainCommands.KeyText(MainCommand.PlatformFilter)}");
     }
 }

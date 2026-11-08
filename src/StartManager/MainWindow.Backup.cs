@@ -16,9 +16,9 @@ public sealed partial class MainWindow
     // The base of a backup command of «Свойства ▾» (and its keys): a file or a server base, no other backup or load running.
     private BaseEntry? BackupBase()
     {
-        if (loadFailed || reading || closed) { if (!closed) status.Text = "Список занят или не загружен. Дождитесь завершения операции."; return null; }
-        if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) { status.Text = "Сначала выберите базу в списке."; return null; }
-        if (!BackupCommands.Applies(entry)) { status.Text = "Резервное копирование и загрузка доступны только для файловых и серверных информационных баз."; return null; }
+        if (loadFailed || reading || closed) { if (!closed) status.Text = MainCommands.BusyText; return null; }
+        if (bases.SelectedItem is not LibraryRow { Orphan: null, Entry: { } entry }) { status.Text = MainCommands.SelectBaseText; return null; }
+        if (!BackupCommands.Applies(entry)) { status.Text = MainCommands.BackupKindText; return null; }
         if (BackupOperation.Running || backupCommandOpen) { status.Text = BackupOperation.BusyMessage; return null; }
         return entry;
     }
