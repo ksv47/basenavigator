@@ -410,7 +410,9 @@ public sealed class BackupRunTests : IDisposable
     {
         var first = new BackupJournalStore(Settings); var second = new BackupJournalStore(Settings);
         var baseId = Guid.NewGuid();
-        Parallel.For(0, 20, i => (i % 2 == 0 ? first : second).Add(Made(baseId, Guid.Empty, 1 + i, Path.Combine(root, $"{i}.dt"))));
+        // Two writers at a time, as two windows: 20 unbounded workers queued longer than the lock's 1.5 s on a slow CI disk
+        // (Actions ubuntu 09.11: «Файл занят другим окном»), which the product never meets.
+        Parallel.For(0, 20, new ParallelOptions { MaxDegreeOfParallelism = 2 }, i => (i % 2 == 0 ? first : second).Add(Made(baseId, Guid.Empty, 1 + i, Path.Combine(root, $"{i}.dt"))));
         Assert.Equal(20, first.Load().Records.Count);
     }
 

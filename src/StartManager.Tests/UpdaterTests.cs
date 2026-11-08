@@ -1658,9 +1658,11 @@ public sealed class UpdaterTests : IDisposable
                 Assert.False(Directory.Exists(Path.Combine(app, ".previous.new")));
                 Assert.False(Directory.Exists(Path.Combine(app, Updater.ArchiveFolder)));
                 Assert.False(Updater.ChangedInThisProcess);
-                // The running original stays aside while it is mapped; the cleanup leaves it and removes the rest.
+                // The running original stays aside while it is mapped; the cleanup does not fail and removes the rest. Windows 10
+                // refuses to delete the mapped file (it stays); Windows Server of GitHub Actions deletes it (09.11) — both are fine.
                 Updater.Cleanup(app, main);
-                Assert.Equal(before[Exe], File.ReadAllBytes(Assert.Single(Directory.GetFiles(app, Exe + ".old-*"))));
+                Assert.All(Directory.GetFiles(app, Exe + ".old-*"), x => Assert.Equal(before[Exe], File.ReadAllBytes(x)));
+                Assert.True(Directory.GetFiles(app, Exe + ".old-*").Length <= 1);
                 Assert.Equal(before[Exe], File.ReadAllBytes(main));
             }
         }
