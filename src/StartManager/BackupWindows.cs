@@ -390,10 +390,11 @@ internal sealed class BackupExecuteWindow : Window
         // read by the main window when this window is gone; Codex re-check 11).
         Closing += (_, e) => { if (running || locking) { e.Cancel = true; closeAsked |= releasing; } };
         // The run disables the content, «Закрыть» (IsCancel) with it: Escape then asks to close as the title bar's cross does
-        // (Codex re-check 12, P3). Tunnel: the key comes whatever is focused.
+        // (Codex re-check 12, P3). Tunnel: the key comes whatever is focused. An open popup (the list of scenarios, opened while the
+        // lock is written) takes the key first and closes alone (Linux 5, Н1; DialogLayout.EscapeClosesPopupFirst).
         AddHandler(KeyDownEvent, (_, e) =>
         {
-            if (e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None || !(running || locking)) return;
+            if (e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None || !(running || locking) || DialogLayout.HasOpenPopup(this)) return;
             e.Handled = true; Close();
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         Closed += (_, _) =>

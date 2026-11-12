@@ -122,15 +122,29 @@ public static class PlatformCatalog
         var found = new Dictionary<string, PlatformInstallation>(comparer);
         var visited = new HashSet<string>(comparer);
         var warnings = new List<string>();
+        // A file is read once: a client chosen by hand inside a search folder is met in the walk and again in the explicit paths,
+        // and the warning about its unknown version was shown twice (Linux 4, Н2).
+        var inspected = new HashSet<string>(comparer);
         void Inspect(string path)
         {
+            string full;
+            try { full = Path.GetFullPath(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // A spelling that is no path (a NUL character) is said once too; it never equals a full path (Codex audit, P3).
+                if (inspected.Add(path)) warnings.Add($"Не удалось прочитать {path}: {ex.Message}");
+                return;
+            }
+            if (!inspected.Add(full)) return;
+            // The full path is read, not the given spelling: the version from the folder names walks the parents of the text, and
+            // «bin/./.» must find what «bin» finds whichever comes first (Codex audit, P2). Links are not resolved.
             try
             {
-                if (Read(path) is { } installation) found.TryAdd(Path.GetFullPath(path), installation);
-                else if (File.Exists(path)) warnings.Add($"Версия клиента не определена: {path}. Для этого файла доступен ручной выбор.");
+                if (Read(full) is { } installation) found.TryAdd(full, installation);
+                else if (File.Exists(full)) warnings.Add($"Версия клиента не определена: {full}. Для этого файла доступен ручной выбор.");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-            { warnings.Add($"Не удалось прочитать {path}: {ex.Message}"); }
+            { warnings.Add($"Не удалось прочитать {full}: {ex.Message}"); }
         }
         void Visit(string path, int depth)
         {
@@ -233,9 +247,29 @@ public static class PlatformCatalog
             : bitness.StartsWith("x86", StringComparison.Ordinal) ? PlatformArchitecture.PreferX86 : PlatformArchitecture.Any;
     }
 
-    /// <summary>No client or rule anywhere: choose like 1CEStart by the .v8i Version, then by DefaultVersion of 1CEStart, or the newest 8.x.</summary>
-    public static bool IsImplicit(Library library, BaseEntry entry) => entry.PlatformRule is null && library.PlatformRule is null &&
-        string.IsNullOrWhiteSpace(entry.Executable) && string.IsNullOrWhiteSpace(library.Executable);
+    /// <summary>A release of the record (8.3.27 or 8.3.27.1989), not just its family (8.3).</summary>
+    public static bool FullRelease(string? version) => IsVersion(version) && version!.Split('.').Length >= 3;
+
+    /// <summary>The general rule of the settings for this base. As the rule of a branch and as 1CEStart, it does not replace a full
+    /// release of the record: a base with Version=8.3.27.1989 starts that release, not the newest 8.3 (decision of the user 12.11.2026:
+    /// a thin client of the newest release did not connect to an older server).</summary>
+    public static PlatformRule? CommonRule(Library library, BaseEntry entry) => FullRelease(entry.PlatformVersion) ? null : library.PlatformRule;
+
+    /// <summary>The version rule a start of the base follows: its own (or its branch's, after <see cref="PlatformBranches.WithPlatform"/>),
+    /// else the general one when no client is chosen for it by hand; null: a file chosen by hand or the version of the record.</summary>
+    public static PlatformRule? RuleOf(Library library, BaseEntry entry) =>
+        entry.PlatformRule ?? (string.IsNullOrWhiteSpace(entry.Executable) ? CommonRule(library, entry) : null);
+
+    /// <summary>Whether the start keeps the chosen release (/AppAutoCheckVersion-): only for a rule naming one build. A rule of a
+    /// family or of a release (8.3, 8.3.27) leaves 1C its own choice of the client by the server's version, which a newest client
+    /// of the rule may not match (decision of the user 12.11.2026).</summary>
+    public static bool PinsRelease(PlatformRule? rule) => rule is not null && IsVersion(rule.Version) && rule.Version.Split('.').Length == 4;
+
+    /// <summary>No client or rule anywhere: choose like 1CEStart by the .v8i Version, then by DefaultVersion of 1CEStart, or the newest 8.x.
+    /// The general client file counts only in the mode «Ручной клиент»: with a general rule the settings keep the path of the field,
+    /// disabled, and a record with a full release must not start it (Codex audit 4, F1).</summary>
+    public static bool IsImplicit(Library library, BaseEntry entry) => entry.PlatformRule is null && CommonRule(library, entry) is null &&
+        string.IsNullOrWhiteSpace(entry.Executable) && (library.PlatformRule is not null || string.IsNullOrWhiteSpace(library.Executable));
 
     /// <summary>The architecture of the operating system: on Linux the only one a client may have.</summary>
     public static PlatformArchitecture NativeArchitecture => System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
@@ -259,7 +293,7 @@ public static class PlatformCatalog
         entry = PlatformBranches.WithPlatform(library, entry);
         var rule = entry.PlatformRule;
         if (rule is null && !string.IsNullOrWhiteSpace(entry.Executable)) return entry.Executable;
-        rule ??= library.PlatformRule;
+        rule ??= CommonRule(library, entry);
         var implicitVersion = IsImplicit(library, entry);
         if (rule is null && !implicitVersion) return library.Executable;
         rule?.Validate();

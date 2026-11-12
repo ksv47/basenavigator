@@ -91,6 +91,17 @@ internal static class UiIcons
                 Draw("M7,1 h4 v1 h-4 Z M7,2 h4 v1 h-4 Z M5,3 h8 v1 h-8 Z", "#787878", true);
                 Draw("M7,6 h6 v1 h-6 Z M9,8 h4 v1 h-4 Z M8,10 h5 v1 h-5 Z M6,12 h7 v1 h-7 Z", "#B8B8B8", true);
                 Draw("M2,5 H5 L9,9 L5,13 H2 L5,10 H0 V8 H5 Z", "#4BAD85", true); break;
+            // A page with a folded corner and grey lines, as the original's «Открыть файл» of the common lists.
+            case "file":
+                Draw("M3,1 H10 L13,4 V15 H3 Z", "#FFFFFF", true);
+                Draw("M3.5,1.5 H9.8 L12.5,4.2 V14.5 H3.5 Z M9.5,1.5 V4.5 H12.5", "#6E7F92", width: 1);
+                Draw("M5,7 h6 v1 h-6 Z M5,9 h6 v1 h-6 Z M5,11 h6 v1 h-6 Z", "#5B8FC7", true); break;
+            // A list with a green tick at its first line, as the original's «Назначить основным» of the scenarios.
+            case "default":
+                Draw("M1,2 H15 V14 H1 Z", "#FFFFFF", true);
+                Draw("M1.5,2.5 H14.5 V13.5 H1.5 Z", "#6E7F92", width: 1);
+                Draw("M7,5 h6 v1 h-6 Z M7,8 h6 v1 h-6 Z M7,11 h6 v1 h-6 Z", "#9AA6B2", true);
+                Draw("M2.6,5.4 L4,6.8 L6.4,3.8", "#2E9E6F", width: 1.6); break;
             case "add":
                 canvas.Children.Add(new Ellipse { Width = 16, Height = 16, Fill = Brush.Parse("#4AA884") });
                 Draw("M8,3.6 V12.4 M3.6,8 H12.4", "#FFFFFF", width: 2.3); break;

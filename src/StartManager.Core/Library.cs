@@ -626,8 +626,7 @@ public static class Launcher
         else if (!designer && session == SessionClient.Auto && entry.ClientType.Equals("ThickClient", StringComparison.OrdinalIgnoreCase) &&
             !LaunchParameters.HasKey(start.ArgumentList, "/RunModeOrdinaryApplication", "/RunModeManagedApplication"))
             start.ArgumentList.Add(entry.ManagedApplication ? "/RunModeManagedApplication" : "/RunModeOrdinaryApplication");
-        if (entry.PlatformRule is not null || string.IsNullOrWhiteSpace(entry.Executable) && library.PlatformRule is not null)
-            start.ArgumentList.Add("/AppAutoCheckVersion-");
+        KeepRelease(library, entry, start);
         return start;
     }
 
@@ -649,8 +648,7 @@ public static class Launcher
             if (!File.Exists(thin)) throw new ArgumentException($"Для базы на веб-сервере нужен тонкий клиент 1cv8c в каталоге {folder}, но он не установлен. Установите тонкий клиент или выберите другую версию платформы.");
         }
         var start = Build(thin, entry with { Executable = "" }, false);
-        if (entry.PlatformRule is not null || string.IsNullOrWhiteSpace(entry.Executable) && library.PlatformRule is not null)
-            start.ArgumentList.Add("/AppAutoCheckVersion-");
+        KeepRelease(library, entry, start);
         return start;
     }
 
@@ -674,8 +672,17 @@ public static class Launcher
         using var process = Process.Start(Browser(entry));
     }
 
+    // A rule of one build keeps its client; a check of the version the user wrote in the parameters wins and is not repeated or
+    // contradicted (Codex audit 4, F3).
+    private static void KeepRelease(Library library, BaseEntry entry, ProcessStartInfo start)
+    {
+        if (PlatformCatalog.PinsRelease(PlatformCatalog.RuleOf(library, entry)) &&
+            !LaunchParameters.HasKey(start.ArgumentList, "/AppAutoCheckVersion", "/AppAutoCheckVersion+", "/AppAutoCheckVersion-"))
+            start.ArgumentList.Add("/AppAutoCheckVersion-");
+    }
+
     private static bool Automatic(Library library, BaseEntry entry) => entry.PlatformRule is not null ||
-        string.IsNullOrWhiteSpace(entry.Executable) && (library.PlatformRule is not null || PlatformCatalog.IsImplicit(library, entry));
+        string.IsNullOrWhiteSpace(entry.Executable) && (PlatformCatalog.CommonRule(library, entry) is not null || PlatformCatalog.IsImplicit(library, entry));
 
     public static string? Starter(string executable) => Sibling(executable, "1cv8s");
 

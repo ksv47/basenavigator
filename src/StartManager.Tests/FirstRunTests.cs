@@ -225,7 +225,79 @@ public sealed class ImplicitPlatformTests : IDisposable
     [Fact] public void ExplicitDefaultsStillWin()
     {
         Assert.Equal("default", PlatformCatalog.Resolve(new Library { Executable = "default" }, Entry("8.3.27.1989"), Installed));
-        Assert.Equal(Installed[1].Executable, PlatformCatalog.Resolve(new Library { PlatformRule = new() { Version = "8.3.27.2214" } }, Entry("8.3.27.1989"), Installed));
+        // The general rule chooses for a record without a full release only (decision of the user 12.11.2026).
+        Assert.Equal(Installed[1].Executable, PlatformCatalog.Resolve(new Library { PlatformRule = new() { Version = "8.3.27.2214" } }, Entry("8.3"), Installed));
+        Assert.Equal(Installed[1].Executable, PlatformCatalog.Resolve(new Library { PlatformRule = new() { Version = "8.3.27.2214" } }, Entry(""), Installed));
+    }
+
+    // A thin client of the newest 8.3 did not connect to an older server: the base listed Version=8.3.27.1989, the general rule 8.3
+    // chose 8.3.27.2214 and /AppAutoCheckVersion- kept 1C from choosing the server's release (Linux, 12.11.2026).
+    [Theory] [InlineData("8.3")] [InlineData("8.3.27.2214")] [InlineData("8.3.27")]
+    public void GeneralRuleDoesNotReplaceAFullReleaseOfTheRecord(string general)
+    {
+        var library = new Library { PlatformRule = new() { Version = general } };
+        Assert.Equal(Installed[0].Executable, PlatformCatalog.Resolve(library, Entry("8.3.27.1989"), Installed));
+        Assert.Equal(Installed[1].Executable, PlatformCatalog.Resolve(library, Entry("8.3.27.2214"), Installed));
+        var installation = new PlatformInstallation(Environment.ProcessPath!, new Version(8, 3, 27, 1989), Native);
+        Assert.DoesNotContain("/AppAutoCheckVersion-", Launcher.Build(library, Entry("8.3.27.1989"), false, [installation]).ArgumentList);
+    }
+
+    // With a general rule the settings keep the disabled path of «Ручной клиент»: it must not start a record with a full release,
+    // even when it is missing or of another branch (Codex audit 4, F1).
+    [Theory] [InlineData("opt/8.5.1.1343/1cv8")] [InlineData("/missing/old/1cv8")]
+    public void AKeptPathOfTheManualModeDoesNotStartWithAGeneralRule(string kept)
+    {
+        var library = new Library { Executable = kept, PlatformRule = new() { Version = "8.3" } };
+        Assert.Equal(Installed[0].Executable, PlatformCatalog.Resolve(library, Entry("8.3.27.1989"), Installed));
+        Assert.Equal(Installed[1].Executable, PlatformCatalog.Resolve(library, Entry("8.3"), Installed));
+        // The manual mode itself (no general rule) still wins over Version= of the record.
+        Assert.Equal(kept, PlatformCatalog.Resolve(library with { PlatformRule = null }, Entry("8.3.27.1989"), Installed));
+    }
+
+    // A check of the version written in the parameters is kept as the only one; a value of another key is not one (Codex audit 4, F3).
+    [Theory] [InlineData("/AppAutoCheckVersion+", 1)] [InlineData("/AppAutoCheckVersion-", 1)] [InlineData("/AppAutoCheckVersion", 1)]
+    [InlineData("/C /AppAutoCheckVersion+", 2)]
+    public void TheVersionCheckOfTheParametersIsNotRepeated(string parameters, int expected)
+    {
+        var installation = new PlatformInstallation(Environment.ProcessPath!, new Version(8, 3, 27, 2214), Native);
+        var library = new Library { PlatformRule = new() { Version = "8.3.27.2214" } };
+        var args = Launcher.Build(library, Entry("8.3") with { AdditionalParameters = parameters }, false, [installation]).ArgumentList;
+        Assert.Equal(expected, args.Count(x => x.StartsWith("/AppAutoCheckVersion", StringComparison.OrdinalIgnoreCase)));
+        if (expected == 2) Assert.Equal("/AppAutoCheckVersion-", args[^1]);
+    }
+
+    // A client chosen by hand shows its own release, not Version= of the record it overrides (Codex audit 4, F4).
+    [Fact] public void TheColumnOfAManualClientShowsItsRelease()
+    {
+        var manual = PlatformCatalog.Resolve(new Library { Executable = Environment.ProcessPath! }, Entry("8.3.27.1989"), Installed);
+        Assert.Equal(Environment.ProcessPath, manual);
+        string Stub(params string[] parts)
+        {
+            var path = Path.Combine([folder, .. parts, OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8"]);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, "fixture"); return path;
+        }
+        var versioned = BaseInfo.Read(Entry("8.3.27.1989"), new Library { Executable = Stub("8.5.1.100", "bin") }, Installed);
+        Assert.Equal("8.5.1.100", versioned.Platform); Assert.Equal("8.5.1.100", versioned.Release);
+        // Outside a version folder (a text stub has no FileVersionInfo) the release is unknown, not «Version= *» (Grok audit, P3).
+        var odd = Stub("odd");
+        var unknown = BaseInfo.Read(Entry("8.3.27.1989"), new Library { Executable = odd }, Installed);
+        Assert.Equal("—", unknown.Platform); Assert.Equal("", unknown.Release);
+        var own = BaseInfo.Read(Entry("8.3.27.1989") with { Executable = odd }, new Library(), Installed);
+        Assert.Equal("—", own.Platform);
+        // The scan knows the release of that file.
+        var found = BaseInfo.Read(Entry("8.3.27.1989"), new Library { Executable = odd }, [new PlatformInstallation(odd, new(8, 5, 1, 200), Native)]);
+        Assert.Equal("8.5.1.200", found.Platform); Assert.Equal("8.5.1.200", found.Release);
+        Assert.Equal("8.3.27.1989", BaseInfo.Read(Entry("8.3.27.1989"), new Library(), Installed).Platform);
+    }
+
+    [Theory] [InlineData("8.3", false)] [InlineData("8.3.27", false)] [InlineData("8.3.27.2214", true)]
+    public void OnlyARuleOfOneBuildKeepsTheClientFrom1CVersionCheck(string version, bool pinned)
+    {
+        var installation = new PlatformInstallation(Environment.ProcessPath!, new Version(8, 3, 27, 2214), Native);
+        var general = Launcher.Build(new Library { PlatformRule = new() { Version = version } }, Entry("8.3"), false, [installation]);
+        var own = Launcher.Build(new Library(), Entry("8.3") with { PlatformRule = new() { Version = version } }, true, [installation]);
+        Assert.Equal(pinned, general.ArgumentList.Contains("/AppAutoCheckVersion-"));
+        Assert.Equal(pinned, own.ArgumentList.Contains("/AppAutoCheckVersion-"));
     }
 
     [Fact] public void ThinOnlyVersionStartsEnterpriseButNotDesigner()

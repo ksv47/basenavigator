@@ -47,7 +47,7 @@ public static class PlatformBranches
         return parts[0] + "." + parts[1];
     }
 
-    private static bool FullRelease(string version) => PlatformCatalog.IsVersion(version) && version.Split('.').Length >= 3;
+    private static bool FullRelease(string version) => PlatformCatalog.FullRelease(version);
 
     public static string? Of(Library library, BaseEntry entry) =>
         Family(entry.PlatformVersion) ?? (IsBranch(library.MainVersion) ? library.MainVersion : Family(PlatformCatalog.StartDefaultVersion()?.Version));

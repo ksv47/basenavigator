@@ -1314,6 +1314,17 @@ public sealed partial class MainWindow : Window
             sharedList is null ? ParametersPlace.Profile : ReadOnlyList is not null || CommonOf(entry) is not null ? ParametersPlace.ReadOnlyList : ParametersPlace.List,
             CommonLists.ListFileOf(commonAtOpen, sharedList is not null ? library.ListPath : null));
         typography.ApplyDialog(dialog);
+        // The least size grows with the font as the window does (as «Выбор группы»), so a large font keeps a page of a few rows.
+        // At least its two buttons side by side and, in the narrow layout, the heading, a few sections and a page of several fields above
+        // the bottom bar (Codex recheck 12.11, P2).
+        dialog.MinWidth = Math.Max(dialog.MinWidth * UiTypography.DialogScale(typography.DialogSize), 2 * Math.Round(typography.DialogSize * 8) + 50);
+        dialog.MinHeight = Math.Max(dialog.MinHeight * UiTypography.DialogScale(typography.DialogSize), Math.Round(typography.ControlHeight * 13));
+        // F1 and Alt+F1: «Краткая справка» above the dialog at its section, where the explanations moved into the tooltips are too.
+        dialog.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key != Key.F1 || (e.KeyModifiers & ~KeyModifiers.Alt) != 0) return;
+            e.Handled = true; ShowShortHelpForSettings(dialog, ShortHelp.PropertiesNotesTitle);
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         await dialog.ShowDialog(this);
         RestoreListFocus();
     }
@@ -1349,16 +1360,24 @@ public sealed partial class MainWindow : Window
         var readOnly = ReadOnlyList is not null;
         if (readOnly && original is null) { ListLocked(); return; }
         if (original is not null && CommonGroupLocked(original)) return;
-        var dialog = new Window { Title = original is null ? "Создание новой группы" : "Редактирование группы", Width = 500, SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        var panel = new StackPanel { Spacing = 10 };
+        // As the original's FormGroupProp (448×109): compact, resizable, without «Свернуть» and «Развернуть» (decision of the user 11.11).
+        var dialog = new Window { Title = original is null ? "Создание новой группы" : "Редактирование группы", Width = 460, SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, CanMaximize = false, CanMinimize = false };
+        var panel = DialogLayout.Rows();
+        DialogLayout.AlignCaptions(panel);
         var path = new TextBox { Text = original ?? "", PlaceholderText = "Введите название группы" };
         AutomationProperties.SetName(path, "Наименование группы");
         path.IsReadOnly = readOnly;
-        panel.Children.Add(DialogLayout.Field("Наименование:", path));
+        // The explanations in the tooltips, opened by the keyboard too (the original has none).
+        ToolTip.SetTip(path, "Для вложенной группы укажите путь: Проекты/Клиент.");
+        panel.Children.Add(DialogLayout.Field("Наименование:", DialogLayout.TipOnFocus(path)));
         // The original's «Каталог:» (FormGroupProp.edtFolder): a folder for the group, opened by Shift+F12 and proposed for its new bases.
         var folder = new TextBox { Text = original is null ? "" : Groups.Folder(library, original), PlaceholderText = "Папка для ассоциации с группой" };
         AutomationProperties.SetName(folder, "Каталог группы");
-        folder.InnerRightContent = SettingsWindow.Command("…", async () =>
+        ToolTip.SetTip(folder, "Каталог открывается по Shift+F12 и предлагается для новых баз группы.");
+        DialogLayout.TipOnFocus(folder);
+        // The folder glyph and «…» inside the field, as the original's buttoned edit.
+        DialogLayout.PathBox(folder, "folder", typography.DialogIconSize, "Выбрать каталог группы", async () =>
         {
             try
             {
@@ -1369,7 +1388,6 @@ public sealed partial class MainWindow : Window
             catch (Exception ex) { status.Text = "Каталог не выбран: " + LegacyImport.ErrorMessage(ex); }
         });
         panel.Children.Add(DialogLayout.Field("Каталог:", folder));
-        panel.Children.Add(DialogLayout.Label("Для вложенной группы укажите путь: Проекты/Клиент. Каталог открывается по Shift+F12 и предлагается для новых баз группы."));
         var error = new TextBlock { Foreground = UiColors.Error, TextWrapping = TextWrapping.Wrap };
         var buttons = new WrapPanel { Orientation = Orientation.Horizontal };
         var saving = false;
@@ -1401,8 +1419,18 @@ public sealed partial class MainWindow : Window
         save.IsDefault = true;
         var cancel = Action("Отмена", dialog.Close); cancel.IsCancel = true;
         buttons.Children.Add(cancel); buttons.Children.Add(save);
-        dialog.Content = DialogLayout.Frame(panel, buttons, error); typography.ApplyDialog(dialog);
-        dialog.Opened += (_, _) => { path.Focus(); path.SelectAll(); };
+        // «Отмена» and «OK» under the fields without a line, as the original's.
+        dialog.Content = DialogLayout.Frame(panel, buttons, error, line: false); typography.ApplyDialog(dialog);
+        // Never narrower than its two rows need, nor lower than it opens (the original's form has a fixed size).
+        dialog.MinWidth = Math.Round(340 * UiTypography.DialogScale(typography.DialogSize));
+        dialog.Opened += (_, _) =>
+        {
+            path.Focus(); path.SelectAll();
+            // The height its content wants once laid out, not the window's bounds at «Opened»: under X11 they still had the size before
+            // SizeToContent shrank the window, and the minimum stayed 840 at font 12 (Linux check 12.11, Л1).
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => { if (dialog.Content is Layoutable content) dialog.MinHeight = Math.Ceiling(content.DesiredSize.Height); },
+                Avalonia.Threading.DispatcherPriority.Loaded);
+        };
         await dialog.ShowDialog(this);
         RestoreListFocus();
     }
@@ -1560,7 +1588,12 @@ internal sealed class BaseDialog : Window
         var saving = false;
         Closing += (_, e) => { if (saving) e.Cancel = true; };
         Title = entry is null ? "Добавление информационной базы" : "Свойства информационной базы";
-        Width = 760; Height = 560; MinWidth = 380; MinHeight = 350; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        // Compact as the original's 650×523 and resizable, without «Свернуть» and «Развернуть» (decision of the user 11.11.2026).
+        Width = 720; Height = 540; MinWidth = 380; MinHeight = 350; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        CanMaximize = false; CanMinimize = false;
+        var type = typography ?? UiTypography.Default;
+        // The groups of the pages as the original's: a bold blue caption with a line under it, the content a little indented.
+        Control Group(string title, Control content) => DialogLayout.Group(title, content, type.DialogSize, line: true, indent: 8);
         var name = new TextBox { Text = entry?.Name, PlaceholderText = "Например, Бухгалтерия" };
         // As the original's «Размещение информационной базы»: three switches, and each kind has its own fields (edtBaseDir;
         // edtServerCluster and edtServerBase; edtWebAddress), so switching the kind does not lose what was typed for another one.
@@ -1595,21 +1628,29 @@ internal sealed class BaseDialog : Window
         AutomationProperties.SetName(serverBase, "Имя информационной базы в кластере");
         AutomationProperties.SetName(webAddress, "Строка адреса");
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = UiColors.Error };
-        var panel = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 12 };
-        panel.Children.Add(DialogLayout.Field("Наименование", name));
-        var connection = new StackPanel { Spacing = 10 };
+        var panel = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 10 };
+        // The original's top panel: the icon of a base, «Наименование» next to the field, the field over the pages up to the edge.
+        var heading = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 12 };
+        var nameCaption = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 6 };
+        var baseIcon = UiIcons.Create("database", Math.Round(type.DialogIconSize * 1.5)); baseIcon.VerticalAlignment = VerticalAlignment.Center;
+        var nameLabel = new TextBlock { Text = "Наименование", VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        nameCaption.Children.Add(baseIcon); Grid.SetColumn(nameLabel, 1); nameCaption.Children.Add(nameLabel);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        heading.Children.Add(nameCaption); Grid.SetColumn(name, 1); heading.Children.Add(name);
+        panel.Children.Add(heading);
+        var connection = new StackPanel { Spacing = 8 };
         var places = new StackPanel { Spacing = 6, Margin = new Thickness(8, 0, 0, 0) };
         var otherPlaces = new WrapPanel { Orientation = Orientation.Horizontal };
         placeServer.Margin = new Thickness(0, 0, 24, 0);
         otherPlaces.Children.Add(placeServer); otherPlaces.Children.Add(placeWeb);
         places.Children.Add(placeFile); places.Children.Add(otherPlaces);
         connection.Children.Add(places);
-        // The original's PanelCaption: bold, in the colour of the section title (Grok audit 13.10).
-        var kindHeading = new TextBlock { FontWeight = FontWeight.SemiBold, Foreground = UiColors.SectionText, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+        // The original's PanelCaption: bold (Grok audit 13.10); in the text colour, as the live 1.4.0.157 draws it (its .dfm says blue).
+        var kindHeading = new TextBlock { FontWeight = FontWeight.Bold, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
         connection.Children.Add(kindHeading);
-        var filePanel = new StackPanel { Spacing = 6 };
+        var filePanel = new StackPanel { Spacing = 3 };
         filePanel.Children.Add(DialogLayout.Label("Каталог информационной базы:")); filePanel.Children.Add(location);
-        var serverPanel = new StackPanel { Spacing = 8 };
+        var serverPanel = DialogLayout.Rows();
         serverPanel.Children.Add(DialogLayout.Field("Кластер серверов:", cluster));
         serverPanel.Children.Add(DialogLayout.Field("Имя инф. базы в кластере:", serverBase));
         // The original's chkCheckRAgent under the cluster fields: the agent of this computer is compared before every start. Windows only.
@@ -1618,17 +1659,19 @@ internal sealed class BaseDialog : Window
         AutomationProperties.SetName(checkAgent, "Перед запуском ИБ проверять версию Агента сервера");
         ToolTip.SetTip(checkAgent, "Перед запуском версия клиента сравнивается с версией агента сервера (ragent) этого компьютера; при расхождении предлагается сменить версию.");
         serverPanel.Children.Add(checkAgent);
-        var webPanel = new StackPanel { Spacing = 8 };
+        var webPanel = DialogLayout.Rows();
         webPanel.Children.Add(DialogLayout.Field("Строка адреса:", webAddress));
         connection.Children.Add(filePanel); connection.Children.Add(serverPanel); connection.Children.Add(webPanel);
-        // The «…» of the original's edtBaseDir: the folder of the base.
-        var browse = new Button { Content = "…", Padding = new Thickness(8, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Stretch,
-            Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-        ToolTip.SetTip(browse, "Выбрать каталог"); AutomationProperties.SetName(browse, "Выбрать каталог информационной базы");
-        location.InnerRightContent = browse;
-        // The folder glyph on the left of the original's edtBaseDir.
-        var folderGlyph = typography is null ? UiIcons.Create("folder") : UiIcons.Create("folder", typography.IconSize); folderGlyph.Margin = new Thickness(6, 0, 0, 0); folderGlyph.VerticalAlignment = VerticalAlignment.Center;
-        location.InnerLeftContent = folderGlyph;
+        // The original's edtBaseDir: the folder glyph on its left and «…» inside, choosing the folder of the base.
+        DialogLayout.PathBox(location, "folder", type.DialogIconSize, "Выбрать каталог информационной базы", async () =>
+        {
+            try
+            {
+                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Каталог существующей базы", AllowMultiple = false });
+                if (folders.FirstOrDefault()?.TryGetLocalPath() is { } path) location.Text = path;
+            }
+            catch (Exception ex) { error.Text = LegacyImport.ErrorMessage(ex); }
+        });
         // The arrows move between the switches as in the original's group: the next one is checked and focused.
         var placesInOrder = new[] { placeFile, placeServer, placeWeb };
         foreach (var place in placesInOrder)
@@ -1667,18 +1710,17 @@ internal sealed class BaseDialog : Window
         AutomationProperties.SetName(proxyMode, "Использование прокси-сервера");
         var proxyChosen = false;
         proxyMode.SelectionChanged += (_, _) => proxyChosen = true;
+        foreach (var box in new[] { webAuthentication, connectionSpeed, proxyMode }) { box.ItemTemplate = DialogLayout.OneLine; DialogLayout.FitChoices(box, type); }
+        // The short fields beside their captions in two columns, as the original's TLabeledEdit pairs (and the user and password below).
+        TextBox Short(TextBox box) { box.SetValue(DialogLayout.LeastWidthProperty, Math.Round(type.DialogSize * 8)); return box; }
         TextBox ProxyText(string value, string automation)
-        { var box = new TextBox { Text = value }; AutomationProperties.SetName(box, automation); return box; }
+        { var box = Short(new TextBox { Text = value }); AutomationProperties.SetName(box, automation); return box; }
         var proxyServer = ProxyText(entry?.ProxyServer ?? "", "Адрес прокси-сервера");
         var proxyPort = ProxyText(entry?.ProxyPort ?? "", "Порт прокси-сервера");
         var proxyUser = ProxyText(entry?.ProxyUser ?? "", "Пользователь прокси-сервера");
-        var proxyFields = new Grid { ColumnDefinitions = new("*,*"), RowDefinitions = new("Auto,Auto"), ColumnSpacing = 12, RowSpacing = 8, Margin = new Thickness(24, 0, 0, 0) };
-        void ProxyCell(string caption, Control field, int row, int column)
-        {
-            var cell = DialogLayout.Field(caption, field); Grid.SetRow(cell, row); Grid.SetColumn(cell, column); proxyFields.Children.Add(cell);
-        }
-        // The keyboard goes as in the original's TabOrder: address, user, port, password.
-        ProxyCell("Адрес:", proxyServer, 0, 0); ProxyCell("Пользователь:", proxyUser, 1, 0); ProxyCell("Порт:", proxyPort, 0, 1);
+        // Filled once the proxy password exists (with the other passwords, below); a panel, as the authentication's, so the columns get
+        // the page's width (in a ContentControl they were measured without it and not drawn, Grok audit 12.11, P1).
+        var proxyFields = new StackPanel { Margin = new Thickness(24, 0, 0, 0) };
         void ShowProxy() => proxyFields.IsEnabled = proxyMode.SelectedIndex == (int)ProxyMode.Manual;
         ShowProxy(); proxyMode.SelectionChanged += (_, _) => ShowProxy();
         webPanel.Children.Add(DialogLayout.Field("Скорость соединения:", connectionSpeed));
@@ -1694,21 +1736,12 @@ internal sealed class BaseDialog : Window
             };
         }
         ShowKind(); OnKindChanged(ShowKind);
-        browse.Click += async (_, _) =>
-        {
-            try
-            {
-                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Каталог существующей базы", AllowMultiple = false });
-                if (folders.FirstOrDefault()?.TryGetLocalPath() is { } path) location.Text = path;
-            }
-            catch (Exception ex) { error.Text = LegacyImport.ErrorMessage(ex); }
-        };
         webPanel.Children.Add(webAuthenticationField);
         webPanel.Children.Add(DialogLayout.Field("Использование Proxy:", proxyMode));
         webPanel.Children.Add(proxyFields);
         // Only for a base being added: the properties of an existing base do not add anything.
-        if (entry is null) connection.Children.Add(DialogLayout.Label("Добавляется подключение к существующей базе. Файлы базы не создаются и не перемещаются."));
-        var details = new StackPanel { Spacing = 14 };
+        if (entry is null) connection.Children.Add(DialogLayout.Note("Добавляется подключение к существующей базе. Файлы базы не создаются и не перемещаются.", type.DialogSize));
+        var details = new StackPanel { Spacing = 12 };
         var groupNames = new[] { "/" }.Concat(groups).ToList();
         var group = new ComboBox { ItemsSource = groupNames, SelectedItem = (entry?.Group ?? selectedGroup) is { Length: > 0 } current ? current : "/", HorizontalAlignment = HorizontalAlignment.Stretch };
         // A long group path ends with an ellipsis; the full path is in the tooltip.
@@ -1717,9 +1750,12 @@ internal sealed class BaseDialog : Window
             var text = new TextBlock { Text = value, TextTrimming = TextTrimming.CharacterEllipsis }; ToolTip.SetTip(text, value); return text;
         });
         ToolTip.SetTip(group, group.SelectedItem); group.SelectionChanged += (_, _) => ToolTip.SetTip(group, group.SelectedItem);
-        details.Children.Add(DialogLayout.Field("Группа:", group));
+        // Our field before the original's groups: its caption in the column of theirs.
+        var groupRow = DialogLayout.Field("Группа:", group); groupRow.Margin = new Thickness(8, 0, 0, 0);
+        details.Children.Add(groupRow);
         AutomationProperties.SetName(group, "Группа базы");
-        var comment = new TextBox { Text = entry?.Comment ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 55 };
+        // Two lines high (the original's is one: ours keeps several lines of the comment).
+        var comment = new TextBox { Text = entry?.Comment ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = type.ControlHeight * 2 - 4 };
         AutomationProperties.SetName(comment, "Комментарий базы");
         // The original's edtConfig and edtConfigVersion (smFormProperty.dfm, TabSheet1): the configuration is typed by hand until its
         // choice from v8updates.lst is made (decision of the user 14.10.2026); «Определить версию» is not shown yet. Both are local.
@@ -1732,27 +1768,32 @@ internal sealed class BaseDialog : Window
         ToolTip.SetTip(release, "Текущий релиз конфигурации");
         release.AttachedToVisualTree += (_, _) => release.Width = Math.Ceiling(UiTypography.Measure("00.00.000.0000", release.FontFamily, release.FontSize).Width) +
             release.Padding.Left + release.Padding.Right + 12;
-        var configurationSection = new StackPanel { Spacing = 8 };
+        var configurationSection = DialogLayout.Rows();
         configurationSection.Children.Add(DialogLayout.Field("Комментарий:", comment));
         configurationSection.Children.Add(DialogLayout.Field("Конфигурация:", configuration));
         configurationSection.Children.Add(DialogLayout.Field("Релиз:", release));
-        details.Children.Add(DialogLayout.Section("Сведения о конфигурации", configurationSection));
+        details.Children.Add(Group("Сведения о конфигурации", configurationSection));
         var platformEditor = new PlatformEditor(this, entry?.Executable ?? "", entry?.PlatformRule, true, initial?.PlatformVersion ?? "", typography);
         // The original's «Режим» (cboApp): App= of the list; «(ОП)» and «(УП)» both are App=ThickClient, told apart locally.
         var clientModes = new[] { "Автоматический", "Тонкий клиент", "Толстый клиент (ОП)", "Толстый клиент (УП)", "Web-клиент" };
         var clientMode = new ComboBox { ItemsSource = clientModes, HorizontalAlignment = HorizontalAlignment.Stretch,
-            SelectedIndex = BaseDialog.ClientModeIndex(initial?.ClientType ?? "", initial?.ManagedApplication == true) };
+            SelectedIndex = BaseDialog.ClientModeIndex(initial?.ClientType ?? "", initial?.ManagedApplication == true), ItemTemplate = DialogLayout.OneLine };
+        DialogLayout.FitChoices(clientMode, type);
         var initialClientMode = clientMode.SelectedIndex;
         AutomationProperties.SetName(clientMode, "Режим запуска информационной базы");
         ToolTip.SetTip(clientMode, "Режим запуска информационной базы (App= в списке). Толстый клиент: (ОП) — обычное приложение, (УП) — управляемое.");
-        var platformSection = new StackPanel { Spacing = 8 };
+        var platformSection = DialogLayout.Rows();
         platformSection.Children.Add(platformEditor);
         platformSection.Children.Add(DialogLayout.Field("Режим:", clientMode));
-        details.Children.Add(DialogLayout.Section("Используемая платформа", platformSection));
+        details.Children.Add(Group("Используемая платформа", platformSection));
         var additional = new TextBox { Text = entry?.EffectiveParameters ?? "" };
         AutomationProperties.SetName(additional, "Дополнительные параметры запуска");
         var processing = new ProcessingEditor(this, entry?.ExternalProcessing ?? "", error);
-        var launchSettings = new StackPanel { Spacing = 8 };
+        // The explanation of the page is in the tooltip of the processing, opened by the keyboard too.
+        ToolTip.SetTip(processing, "Обработка запускается только в 1С:Предприятии. Для веб-базы параметры и обработка используют тонкий клиент. " +
+            "Имя и пароль задаются на странице «Аутентификация».");
+        DialogLayout.TipOnFocus(processing);
+        var launchSettings = DialogLayout.Rows();
         // As the original: the first of «Параметры запуска»; every start of the base is elevated (Windows only).
         var runAsAdmin = new CheckBox { Content = DialogLayout.Label("Запуск от имени администратора"), IsChecked = initial?.RunAsAdmin == true,
             IsVisible = OperatingSystem.IsWindows() };
@@ -1770,8 +1811,7 @@ internal sealed class BaseDialog : Window
         launchSettings.Children.Add(ParameterHint.For(additional));
         // Where the string is kept: the record of the list (1CEStart reads it too), else the settings of the program.
         if (parametersPlace == ParametersPlace.ReadOnlyList)
-            launchSettings.Children.Add(new TextBlock { Text = "Список только для чтения — параметры хранятся в настройках программы.",
-                Foreground = UiColors.Muted, TextWrapping = TextWrapping.Wrap });
+            launchSettings.Children.Add(DialogLayout.Note("Список только для чтения — параметры хранятся в настройках программы.", type.DialogSize));
         if (parametersPlace == ParametersPlace.List)
         {
             var accessCode = new TextBlock { Text = "Код разрешения /UC будет записан в список баз (.v8i): его увидят все, кто открывает этот список, " +
@@ -1781,8 +1821,7 @@ internal sealed class BaseDialog : Window
             launchSettings.Children.Add(accessCode);
         }
         launchSettings.Children.Add(DialogLayout.Field("Внешняя обработка:", processing));
-        launchSettings.Children.Add(DialogLayout.Label("Обработка запускается только в 1С:Предприятии. Для веб-базы параметры и обработка используют тонкий клиент. Имя и пароль задаются на странице «Аутентификация»."));
-        details.Children.Add(DialogLayout.Section("Параметры запуска", launchSettings));
+        details.Children.Add(Group("Параметры запуска", launchSettings));
         // The original's page «Аутентификация». The mode is WA= of the list; the rest is local, passwords go to the vault.
         var authentication = entry?.Authentication ?? new AuthenticationSettings();
         var chooseAutomatically = new RadioButton { Content = DialogLayout.Label("Выбирать автоматически"), GroupName = "authentication-mode", IsChecked = entry?.AskCredentials != true };
@@ -1795,7 +1834,7 @@ internal sealed class BaseDialog : Window
         TextBox Text(string value, string automation) { var box = new TextBox { Text = value }; AutomationProperties.SetName(box, automation); return box; }
         TextBox Secret(PasswordRole role, string automation)
         {
-            var box = new TextBox { Text = savedPasswords.GetValueOrDefault(role, ""), PasswordChar = '\u25CF' };
+            var box = Short(new TextBox { Text = savedPasswords.GetValueOrDefault(role, ""), PasswordChar = '\u25CF' });
             AutomationProperties.SetName(box, automation); passwordBoxes[role] = box; return box;
         }
         // A check box that enables the fields under it, as in the original.
@@ -1803,21 +1842,22 @@ internal sealed class BaseDialog : Window
         {
             var box = new CheckBox { Content = DialogLayout.Label(caption), IsChecked = on };
             AutomationProperties.SetName(box, caption);
-            var fields = new StackPanel { Spacing = 8, Margin = new Thickness(24, 0, 0, 0), IsEnabled = on };
+            var fields = new StackPanel { Spacing = 6, Margin = new Thickness(24, 0, 0, 0), IsEnabled = on };
             box.IsCheckedChanged += (_, _) => fields.IsEnabled = box.IsChecked == true;
             return (box, fields);
         }
+        // «Пользователь: [ ] Пароль: [ ]» in one row, as the original's.
+        Control UserAndPassword(TextBox user, TextBox password) =>
+            DialogLayout.Columns([DialogLayout.Field("Пользователь:", Short(user))], [DialogLayout.Field("Пароль:", password)], Math.Round(type.DialogSize * 16));
         var (enterpriseLogin, enterpriseFields) = Switch("Параметры аутентификации для режима «1С:Предприятие»", authentication.EnterpriseLogin);
         var enterpriseUser = Text(authentication.EnterpriseUser, "Пользователь 1С:Предприятия");
-        enterpriseFields.Children.Add(DialogLayout.Field("Пользователь:", enterpriseUser));
-        enterpriseFields.Children.Add(DialogLayout.Field("Пароль:", Secret(PasswordRole.Enterprise, "Пароль 1С:Предприятия")));
+        enterpriseFields.Children.Add(UserAndPassword(enterpriseUser, Secret(PasswordRole.Enterprise, "Пароль 1С:Предприятия")));
         var (designerLogin, designerFields) = Switch("Параметры аутентификации для режима «Конфигуратор»", authentication.DesignerLogin);
         var designerUser = Text(authentication.DesignerUser, "Пользователь конфигуратора");
-        designerFields.Children.Add(DialogLayout.Field("Пользователь:", designerUser));
-        designerFields.Children.Add(DialogLayout.Field("Пароль:", Secret(PasswordRole.Designer, "Пароль конфигуратора")));
+        designerFields.Children.Add(UserAndPassword(designerUser, Secret(PasswordRole.Designer, "Пароль конфигуратора")));
         var osAuthentication = new CheckBox { Content = DialogLayout.Label("Использовать аутентификацию ОС"), IsChecked = authentication.OsAuthentication };
         AutomationProperties.SetName(osAuthentication, "Использовать аутентификацию ОС");
-        var credentials = new StackPanel { Spacing = 10 };
+        var credentials = new StackPanel { Spacing = 8 };
         credentials.Children.Add(DialogLayout.Field("Аутентификация:", modes));
         credentials.Children.Add(enterpriseLogin); credentials.Children.Add(enterpriseFields);
         credentials.Children.Add(designerLogin); credentials.Children.Add(designerFields);
@@ -1827,20 +1867,23 @@ internal sealed class BaseDialog : Window
         repositoryPath.PlaceholderText = "Каталог или tcp://сервер/хранилище";
         var repositoryUser = Text(authentication.RepositoryUser, "Пользователь хранилища");
         repositoryFields.Children.Add(DialogLayout.Field("Каталог:", repositoryPath));
-        repositoryFields.Children.Add(DialogLayout.Field("Пользователь:", repositoryUser));
-        repositoryFields.Children.Add(DialogLayout.Field("Пароль:", Secret(PasswordRole.Repository, "Пароль хранилища")));
+        repositoryFields.Children.Add(UserAndPassword(repositoryUser, Secret(PasswordRole.Repository, "Пароль хранилища")));
         // The proxy password of the page «Подключение» is saved with the others; ProxyPassword= of the list is not shown or changed.
         var proxyPassword = Secret(PasswordRole.Proxy, "Пароль прокси-сервера");
         if (proxyPassword.Text is not { Length: > 0 } && entry?.ListProxyPassword is { Length: > 0 }) proxyPassword.PlaceholderText = "задан в общем списке";
-        ProxyCell("Пароль:", proxyPassword, 1, 1);
-        var storage = new StackPanel { Spacing = 10 };
+        // The keyboard goes as in the original's TabOrder: address, user, port, password.
+        proxyFields.Children.Add(DialogLayout.Columns([DialogLayout.Field("Адрес:", proxyServer), DialogLayout.Field("Пользователь:", proxyUser)],
+            [DialogLayout.Field("Порт:", proxyPort), DialogLayout.Field("Пароль:", proxyPassword)], Math.Round(type.DialogSize * 16)));
+        ToolTip.SetTip(repository, "Хранилище подключается при запуске конфигуратора.");
+        DialogLayout.TipOnFocus(repository);
+        var storage = new StackPanel { Spacing = 8 };
         storage.Children.Add(repository); storage.Children.Add(repositoryFields);
-        storage.Children.Add(DialogLayout.Label("Хранилище подключается при запуске конфигуратора."));
-        var authenticationPage = new StackPanel { Spacing = 14 };
-        authenticationPage.Children.Add(DialogLayout.Section("Параметры аутентификации", credentials));
-        authenticationPage.Children.Add(DialogLayout.Section("Хранилище конфигурации", storage));
-        authenticationPage.Children.Add(DialogLayout.Label("Пароли хранятся в папке настроек БазоНавигатора в зашифрованном виде и при запуске передаются 1С в командной строке. " +
-            "«Выбирать автоматически / Запрашивать имя и пароль» записывается в общий список, как в стандартном окне 1С."));
+        var authenticationPage = new StackPanel { Spacing = 12 };
+        authenticationPage.Children.Add(Group("Параметры аутентификации", credentials));
+        authenticationPage.Children.Add(Group("Хранилище конфигурации", storage));
+        // Where the passwords go and what is written to the common list: about the data, so on the page (one grey note).
+        authenticationPage.Children.Add(DialogLayout.Note("Пароли хранятся в папке настроек БазоНавигатора в зашифрованном виде и при запуске передаются 1С в командной строке. " +
+            "«Выбирать автоматически / Запрашивать имя и пароль» записывается в общий список, как в стандартном окне 1С.", type.DialogSize));
         if (passwordWarning is not null) authenticationPage.Children.Add(new TextBlock { Text = passwordWarning, TextWrapping = TextWrapping.Wrap, Foreground = UiColors.Error });
         // The original's page «Прочие свойства»: local to this program, like the comment.
         var disallowDelete = new CheckBox { Content = DialogLayout.Label("Запретить удаление из списка баз"), IsChecked = entry?.DisallowDelete == true };
@@ -1848,14 +1891,16 @@ internal sealed class BaseDialog : Window
         var doubleClickItems = new[] { "<Использовать общие настройки>", "1С:Предприятие", "1С:Предприятие с аутентификацией",
             "1С:Предприятие с параметрами", "1С:Конфигуратор", "Открыть свойства информационной базы" };
         var doubleClick = new ComboBox { ItemsSource = doubleClickItems, SelectedIndex = entry?.DoubleClick is { } chosen ? (int)chosen + 1 : 0,
-            HorizontalAlignment = HorizontalAlignment.Stretch };
+            HorizontalAlignment = HorizontalAlignment.Stretch, ItemTemplate = DialogLayout.OneLine };
+        DialogLayout.FitChoices(doubleClick, type);
         AutomationProperties.SetName(doubleClick, "Действие при двойном щелчке");
-        var permissions = new StackPanel { Spacing = 8 };
+        var permissions = DialogLayout.Rows();
         permissions.Children.Add(disallowDelete);
-        permissions.Children.Add(DialogLayout.Label("Запрет действует на команды БазоНавигатора. Стандартное окно 1С и другие программы могут убрать базу из общего списка."));
-        var otherPage = new StackPanel { Spacing = 14 };
-        otherPage.Children.Add(DialogLayout.Section("Разрешения", permissions));
-        otherPage.Children.Add(DialogLayout.Section("Прочее", DialogLayout.Field("Действие при двойном щелчке:", doubleClick)));
+        // The limit of the protection of the base's record: about the data, so on the page.
+        permissions.Children.Add(DialogLayout.Note("Запрет действует на команды БазоНавигатора. Стандартное окно 1С и другие программы могут убрать базу из общего списка.", type.DialogSize));
+        var otherPage = new StackPanel { Spacing = 12 };
+        otherPage.Children.Add(Group("Разрешения", permissions));
+        otherPage.Children.Add(Group("Прочее", DialogLayout.Field("Действие при двойном щелчке:", doubleClick)));
         // The original's page «Блокировка»: the file 1Cv8.cdn in the folder of a file base. It is read when the page opens
         // and written or deleted on «Сохранить», after the base itself; an existing lock is read-only until «Изменить».
         var lockOn = new CheckBox { Content = DialogLayout.Label("Заблокировать информационную базу") };
@@ -1870,10 +1915,14 @@ internal sealed class BaseDialog : Window
         foreach (var time in new[] { startTime, endTime })
             time.AttachedToVisualTree += (_, _) => time.Width = TextFit.Fit(100, UiTypography.Measure("00:00:00", time.FontFamily, time.FontSize).Width,
                 time.Padding.Left + time.Padding.Right + 12);
-        var startMenu = new Button { Content = "…" }; var endMenu = new Button { Content = "…" };
+        // The original's small «...» buttons beside the time and its flat blue «{..}».
+        Button Small(string text) => new() { Content = text, Padding = new Thickness(6, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Stretch };
+        var startMenu = Small("…"); var endMenu = Small("…");
         ToolTip.SetTip(startMenu, "Определить начало"); ToolTip.SetTip(endMenu, "Определить продолжительность");
         var lockText = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 75 };
-        var templates = new Button { Content = "{..}", VerticalAlignment = VerticalAlignment.Top };
+        var templates = new Button { Content = new TextBlock { Text = "{..}", FontWeight = FontWeight.Bold }, VerticalAlignment = VerticalAlignment.Top,
+            Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = UiColors.SectionText, Padding = new Thickness(4, 2), MinHeight = 0 };
+        templates.Resources["ButtonBackgroundDisabled"] = templates.Resources["ButtonBorderBrushDisabled"] = Brushes.Transparent;
         ToolTip.SetTip(templates, "Шаблон текста. {ДатаНач} и {ДатаКон} заменяются датами блокировки при сохранении.");
         var lockCode = new TextBox { MaxWidth = 240, HorizontalAlignment = HorizontalAlignment.Left };
         ToolTip.SetTip(lockCode, "Код для входа при блокировке (ключ запуска /UC); можно оставить пустым");
@@ -1979,36 +2028,34 @@ internal sealed class BaseDialog : Window
         var endRow = MomentRow(lockEnd, endDate, endTime, endMenu);
         var textRow = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 6 };
         textRow.Children.Add(lockText); Grid.SetColumn(templates, 1); textRow.Children.Add(templates);
-        var lockFields = new StackPanel { Spacing = 10, Margin = new Thickness(24, 0, 0, 0) };
+        var lockFields = new StackPanel { Spacing = 8, Margin = new Thickness(24, 0, 0, 0) };
         Grid.SetIsSharedSizeScope(lockFields, true);
         lockFields.Children.Add(startRow); lockFields.Children.Add(endRow);
-        lockFields.Children.Add(DialogLayout.Field("Текст сообщения пользователям:", textRow));
+        // As the original: the caption of the text above it.
+        lockFields.Children.Add(DialogLayout.Above("Текст сообщения пользователям:", textRow));
         lockFields.Children.Add(DialogLayout.Field("Код разрешения:", lockCode));
-        var lockBody = new StackPanel { Spacing = 10 };
+        var lockBody = new StackPanel { Spacing = 8 };
         lockBody.Children.Add(lockOn); lockBody.Children.Add(lockFields); lockBody.Children.Add(lockState); lockBody.Children.Add(lockEdit);
-        lockBody.Children.Add(DialogLayout.Label("Файл 1Cv8.cdn записывается в каталог базы при сохранении свойств. Пользователи, которые уже работают в базе, " +
-            "не отключаются; без кода разрешения новые сеансы не открываются."));
-        var lockPage = DialogLayout.Section("Установка блокировки информационной базы", lockBody);
-        var lockUnavailable = DialogLayout.Section("Установка блокировки информационной базы",
+        // What saving does to the base: on the page (one grey note).
+        lockBody.Children.Add(DialogLayout.Note("Файл 1Cv8.cdn записывается в каталог базы при сохранении свойств. Пользователи, которые уже работают в базе, " +
+            "не отключаются; без кода разрешения новые сеансы не открываются.", type.DialogSize));
+        var lockPage = Group("Установка блокировки информационной базы", lockBody);
+        var lockUnavailable = Group("Установка блокировки информационной базы",
             DialogLayout.Label(MainCommands.SetLockKindText));
         // The original's page «Резервное копирование» (smFormProperty.dfm:1048-1140): «Сценарий:», «Каталог:», «Префикс:» — local to this
         // program, like the comment. Without readable scenarios the choice is kept as it is and cannot be changed.
         var scenarioChoices = BackupScenarioEdit.Choices(backupScenarios?.Scenarios ?? [], backupScenarios is null ? null : entry?.BackupScriptId);
         var backupScenario = new ComboBox { ItemsSource = scenarioChoices.Select(x => x.Text).ToArray(), HorizontalAlignment = HorizontalAlignment.Stretch,
             SelectedIndex = Math.Max(0, scenarioChoices.Select(x => x.Id).ToList().IndexOf(entry?.BackupScriptId)), IsEnabled = backupScenarios is not null };
-        backupScenario.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<string>((value, _) => DialogLayout.Label(value ?? ""));
+        backupScenario.ItemTemplate = DialogLayout.OneLine;
         AutomationProperties.SetName(backupScenario, "Сценарий резервирования");
-        ToolTip.SetTip(backupScenario, "Сценарий, согласно которому будет выполняться резервное копирование");
+        // The original's hints, and the explanations of the page after them (opened by the keyboard too).
+        ToolTip.SetTip(backupScenario, "Сценарий, согласно которому будет выполняться резервное копирование. Сценарии задаются в настройках программы («Сценарии резервирования»).");
         var backupFolder = new TextBox { Text = entry?.BackupFolder ?? "" };
         AutomationProperties.SetName(backupFolder, "Каталог резервных копий базы");
-        ToolTip.SetTip(backupFolder, "Каталог назначения, в который будет производиться выгрузка");
-        var backupGlyph = typography is null ? UiIcons.Create("folder") : UiIcons.Create("folder", typography.IconSize);
-        backupGlyph.Margin = new Thickness(6, 0, 0, 0); backupGlyph.VerticalAlignment = VerticalAlignment.Center;
-        backupFolder.InnerLeftContent = backupGlyph;
-        var backupBrowse = new Button { Content = "…", Padding = new Thickness(8, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Stretch,
-            Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-        ToolTip.SetTip(backupBrowse, "Выбрать каталог"); AutomationProperties.SetName(backupBrowse, "Выбрать каталог резервных копий базы");
-        backupBrowse.Click += async (_, _) =>
+        ToolTip.SetTip(backupFolder, "Каталог назначения, в который будет производиться выгрузка. Пустой каталог — «1. Каталог» сценария, папка Backup рядом " +
+            "с файловой базой или общий «Каталог по-умолчанию» из настроек; относительный каталог отсчитывается от общего.");
+        DialogLayout.PathBox(backupFolder, "folder", type.DialogIconSize, "Выбрать каталог резервных копий базы", async () =>
         {
             try
             {
@@ -2016,38 +2063,45 @@ internal sealed class BaseDialog : Window
                 if (folders.FirstOrDefault()?.TryGetLocalPath() is { } path) backupFolder.Text = path;
             }
             catch (Exception ex) { error.Text = LegacyImport.ErrorMessage(ex); }
-        };
-        backupFolder.InnerRightContent = backupBrowse;
+        });
         var backupPrefix = new TextBox { Text = entry?.BackupPrefix ?? "", MinWidth = 160, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(backupPrefix, "Префикс имени файла резервной копии");
-        ToolTip.SetTip(backupPrefix, "Префикс, который будет добавлен к имени файла");
-        var backupBody = new StackPanel { Spacing = 10 };
+        ToolTip.SetTip(backupPrefix, "Префикс, который будет добавлен к имени файла: подставляется в шаблон имени вместо {Prefix}.");
+        foreach (var tipped in new Control[] { backupScenario, backupFolder, backupPrefix }) DialogLayout.TipOnFocus(tipped);
+        var backupBody = DialogLayout.Rows();
         backupBody.Children.Add(DialogLayout.Field("Сценарий:", backupScenario));
         backupBody.Children.Add(DialogLayout.Field("Каталог:", backupFolder));
         backupBody.Children.Add(DialogLayout.Field("Префикс:", backupPrefix));
-        backupBody.Children.Add(DialogLayout.Label("Пустой каталог — «1. Каталог» сценария, папка Backup рядом с файловой базой или общий «Каталог по-умолчанию» " +
-            "из настроек; относительный каталог отсчитывается от общего. Префикс подставляется в шаблон имени файла вместо {Prefix}. Сценарии " +
-            "задаются в настройках программы («Сценарии резервирования»)."));
         if (backupWarning is not null) backupBody.Children.Add(new TextBlock { Text = backupWarning, TextWrapping = TextWrapping.Wrap, Foreground = UiColors.Error });
-        var backupPage = DialogLayout.Section("Резервное копирование", backupBody);
+        var backupPage = Group("Резервное копирование", backupBody);
         var navigation = new ListBox { ItemsSource = new[] { "1. Сведения", "2. Подключение", "3. Аутентификация", "4. Резервное копирование", "5. Прочие свойства", "6. Блокировка" }, SelectedIndex = 0,
             Background = UiColors.Field, BorderBrush = UiColors.Line, BorderThickness = new Thickness(1) };
         AutomationProperties.SetName(navigation, "Разделы свойств базы");
         ToolTip.SetTip(navigation, "Alt+1 — Сведения; Alt+2 — Подключение; Alt+3 — Аутентификация; Alt+4 — Резервное копирование; Alt+5 — Прочие свойства; Alt+6 — Блокировка");
         navigation.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<string>((value, _) => DialogLayout.Label(value ?? ""));
+        DialogLayout.Sections(navigation, type);
         // Clipped: nothing of the pages is drawn over the lines below them when the window leaves them little height.
-        var pages = new Grid { ColumnDefinitions = new("170,*"), RowDefinitions = new("Auto,*"), ColumnSpacing = 12, RowSpacing = 10, ClipToBounds = true };
+        var pages = new Grid { ColumnDefinitions = new("158,*"), RowDefinitions = new("Auto,*"), ColumnSpacing = 6, RowSpacing = 8, ClipToBounds = true };
         pages.Children.Add(navigation); Grid.SetRowSpan(navigation, 2);
         // The vertical scroll bar of a page takes its own column on Windows and Linux alike (Linux re-check 27.10): no margin for it.
-        // Wrapped hints are fitted to their column instead (DialogLayout.WrapWithin, at the end of the constructor).
-        var pageContent = new ContentControl { Content = details };
-        var page = new ScrollViewer { Content = pageContent, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        // Wrapped hints are fitted to their column instead (DialogLayout.WrapWithin, at the end of the constructor). The bar is always
+        // there, so a page that only just fits does not switch between two layouts (as the settings, Linux check 2 of 11.11).
+        var pageContent = new ContentControl { Content = details, Margin = new Thickness(8, 6, 8, 8) };
+        var pageScroll = new ScrollViewer { Content = pageContent, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Visible };
+        // The original's page control with hidden tabs: a 1 px frame round the page.
+        var page = new Border { BorderBrush = UiColors.Line, BorderThickness = new Thickness(1), Child = pageScroll };
         Grid.SetColumn(page, 1); Grid.SetRowSpan(page, 2); pages.Children.Add(page);
-        var connectionPage = DialogLayout.Section("Размещение информационной базы", connection);
+        var connectionPage = Group("Размещение информационной базы", connection);
+        // Every page: one caption column as wide as its longest caption, the captions at its right edge next to the fields (smFormProperty).
+        foreach (var shown in new Control[] { details, connectionPage, authenticationPage, backupPage, otherPage, lockPage, lockUnavailable })
+        { shown.SetValue(DialogLayout.RightCaptionsProperty, true); DialogLayout.AlignCaptions(shown); }
         void ShowPage()
         {
             var fileBase = Kind() == ConnectionKind.File;
-            pageContent.Content = navigation.SelectedIndex switch { 1 => connectionPage, 2 => authenticationPage, 3 => backupPage, 4 => otherPage, LockPage => fileBase ? lockPage : lockUnavailable, _ => details };
+            var shown = navigation.SelectedIndex switch { 1 => connectionPage, 2 => authenticationPage, 3 => backupPage, 4 => otherPage, LockPage => fileBase ? lockPage : lockUnavailable, _ => details };
+            // Another page opens at its top, as the settings' pages: the offset of the page before is not kept (Linux check 12.11, Л2).
+            if (!ReferenceEquals(pageContent.Content, shown)) { pageContent.Content = shown; pageScroll.Offset = default; }
             if (navigation.SelectedIndex == LockPage && fileBase && lockFolder != (location.Text?.Trim() ?? "")) _ = LoadLock();
         }
         navigation.SelectionChanged += (_, _) => ShowPage();
@@ -2057,14 +2111,18 @@ internal sealed class BaseDialog : Window
         pages.SizeChanged += (_, _) =>
         {
             var narrow = pages.Bounds.Width < 560;
-            var navigationWidth = Math.Max(170, new[] { "3. Аутентификация", "4. Резервное копирование", "5. Прочие свойства", "6. Блокировка" }.Max(x => UiTypography.Measure(x, FontFamily, FontSize).Width) + 36);
+            // As wide as the longest section on one line (the original's 158 at 8 pt).
+            var navigationWidth = Math.Max(150, new[] { "3. Аутентификация", "4. Резервное копирование", "5. Прочие свойства", "6. Блокировка" }.Max(x => UiTypography.Measure(x, FontFamily, FontSize).Width) + 30);
             pages.ColumnDefinitions[0].Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(navigationWidth);
             pages.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            // «Наименование» stands over the sections at their right edge, its field over the pages.
+            heading.ColumnDefinitions[0].Width = narrow ? GridLength.Auto : new GridLength(Math.Max(0, navigationWidth + pages.ColumnSpacing - heading.ColumnSpacing));
             Grid.SetRowSpan(navigation, narrow ? 1 : 2); navigation.MaxHeight = narrow ? Math.Max(100, FontSize * 4 + 24) : double.PositiveInfinity;
-            // Narrow, the list shares the height left to the pages with the page instead of keeping its own: an Auto row went past
-            // the bottom of the pages over the path line and its message at 22 pt in 380×350 (Linux check 28.10). The list scrolls.
-            pages.RowDefinitions[0].Height = narrow ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
-            pages.RowDefinitions[0].MaxHeight = narrow ? navigation.MaxHeight : double.PositiveInfinity;
+            // Narrow, the list keeps at most a few rows (it scrolls) and the page takes the rest. Its own row is no star row with a
+            // MaxHeight: after the wide layout that pair kept the wide height and pushed the buttons below the window at font 22 until a
+            // page switch (Codex audit 12.11, P3). The least size grows with the font, so the list and a page always fit; the pages are
+            // clipped all the same (an Auto row went past them at 22 pt in 380×350, Linux check 28.10).
+            pages.RowDefinitions[0].Height = GridLength.Auto;
             Grid.SetColumn(page, narrow ? 0 : 1); Grid.SetRow(page, narrow ? 1 : 0); Grid.SetRowSpan(page, narrow ? 1 : 2);
         };
         Grid.SetRow(pages, 1); panel.Children.Add(pages);
@@ -2078,9 +2136,10 @@ internal sealed class BaseDialog : Window
             if (e.Key == Key.D5 || e.Key == Key.NumPad5) { navigation.SelectedIndex = 4; e.Handled = true; }
             if (e.Key == Key.D6 || e.Key == Key.NumPad6) { navigation.SelectedIndex = LockPage; e.Handled = true; }
         };
-        var buttons = new WrapPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var buttons = new WrapPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, ItemSpacing = 6 };
         var save = new Button { Content = "Сохранить" };
-        ToolTip.SetTip(save, "Сохранить · Ctrl+Enter");
+        // The original's hints of its buttons, with our key.
+        ToolTip.SetTip(save, "Записать настройки и закрыть форму · Ctrl+Enter");
         KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.Control && save.IsEnabled && save.IsEffectivelyEnabled)
@@ -2212,6 +2271,8 @@ internal sealed class BaseDialog : Window
             finally { saving = false; panel.IsEnabled = buttons.IsEnabled = true; }
         };
         var cancel = new Button { Content = "Закрыть", IsCancel = true }; cancel.Click += (_, _) => Close(null);
+        ToolTip.SetTip(cancel, "Закрыть форму (Esc)");
+        foreach (var button in new[] { save, cancel }) button.MinWidth = Math.Round(type.DialogSize * 8);
         buttons.Children.Add(save); buttons.Children.Add(cancel);
         // A base of a common list of 1CEStart: the page is shown, only «Дополнительные параметры» are saved, into the settings of the
         // program (the reason stands where errors do; the save callback refuses any other change).
@@ -2290,7 +2351,20 @@ internal sealed class BaseDialog : Window
         }
         foreach (var shown in new Control[] { details, connectionPage, authenticationPage, backupPage, otherPage, lockPage, lockUnavailable })
             DialogLayout.WrapWithin(shown);
-        Content = DialogLayout.Frame(panel, buttons, error, scrollBody: false);
+        // The bottom bar: the message on one line left of «Сохранить» and «Закрыть» (as the settings), so a message never moves the pages.
+        var root = new Grid { Margin = new Thickness(12), RowDefinitions = new("*,Auto"), RowSpacing = 8 };
+        root.Children.Add(panel);
+        var footer = new Border { BorderBrush = UiColors.Line, BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 8, 0, 0),
+            Child = DialogLayout.Footer(this, error, new Panel(), buttons, () => type) };
+        Grid.SetRow(footer, 1); root.Children.Add(footer);
+        Content = root;
+        // The grids around the pages change their rows and columns while the window is laid out (narrow or wide, the footer's message
+        // beside or above the buttons): after a resize they are measured once more, or the first shrink to the least size at font 22
+        // kept a layout 21 px taller than the window and its buttons stood below its edge until a page switch (Codex audit 12.11, P3).
+        SizeChanged += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            foreach (var grid in root.GetVisualDescendants().OfType<Grid>().Where(x => x.FindAncestorOfType<ScrollViewer>() is null).Prepend(root)) grid.InvalidateMeasure();
+        }, Avalonia.Threading.DispatcherPriority.Background);
         Opened += (_, _) => { name.Focus(); name.SelectAll(); };
     }
 }

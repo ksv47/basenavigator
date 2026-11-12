@@ -378,6 +378,10 @@ public sealed class App : Application
         var scrolling = new Style(s => s.Is<ScrollViewer>());
         scrolling.Setters.Add(new Setter(ScrollViewer.AllowAutoHideProperty, false));
         Styles.Add(scrolling);
+        // Linux 4, Н1: the wheel over a closed list, number or date scrolls the page instead of changing the value, in every window.
+        DialogLayout.WheelScrollsPage();
+        // Linux 5, Н1: Escape in an open calendar, list or panel closes only it, in every window; nothing open, as before.
+        DialogLayout.EscapeClosesPopupFirst();
         UiColors.Initialize(this);
         UiStrings.Initialize(this);
         AppLog.Stage("startup.theme.ready");

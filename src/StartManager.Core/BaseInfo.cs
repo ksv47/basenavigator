@@ -17,11 +17,18 @@ public sealed record BaseInfo(string Platform, DateTime? Modified, long? Size, s
             // The client of the base's branch as the start chooses it (Настройки платформы), so the column shows that version.
             entry = PlatformBranches.WithPlatform(library, entry);
             var executable = PlatformCatalog.Resolve(library, entry, installations);
-            var result = Read(entry with { Executable = executable }, executable);
+            var implicitClient = PlatformCatalog.IsImplicit(library, entry);
+            // A client chosen by hand is not described by Version= of the record even as a guess: its release is unknown ("—") unless
+            // the scan found it (Grok audit, P3).
+            var result = Read(entry with { Executable = executable, PlatformVersion = implicitClient ? entry.PlatformVersion : "" }, executable);
             var installation = installations.FirstOrDefault(x => string.Equals(x.Executable, executable,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
-            var rule = entry.PlatformRule ?? (string.IsNullOrWhiteSpace(entry.Executable) ? library.PlatformRule : null);
-            return result with { Platform = rule?.Version ?? (entry.PlatformVersion.Length > 0 ? entry.PlatformVersion : result.Platform),
+            if (result.Platform == "—" && installation is not null) result = result with { Platform = installation.Version.ToString() };
+            var rule = PlatformCatalog.RuleOf(library, entry);
+            // Version= of the record names the platform only when it chooses the client; a client chosen by hand shows its own release
+            // (Codex audit 4, F4).
+            var byRecord = implicitClient && entry.PlatformVersion.Length > 0;
+            return result with { Platform = rule?.Version ?? (byRecord ? entry.PlatformVersion : result.Platform),
                 ArchitectureLabel = installation?.Architecture switch { PlatformArchitecture.X86 => "x86", PlatformArchitecture.X64 => "x64", PlatformArchitecture.Arm64 => "ARM64", _ => "" },
                 PlatformMissing = !File.Exists(executable),
                 Release = File.Exists(executable) && Version.TryParse(result.Platform, out _) ? result.Platform : "",
@@ -30,7 +37,7 @@ public sealed record BaseInfo(string Platform, DateTime? Modified, long? Size, s
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             var result = Read(entry with { Executable = "" }, "");
-            var rule = entry.PlatformRule ?? library.PlatformRule;
+            var rule = entry.PlatformRule ?? PlatformCatalog.CommonRule(library, entry);
             return result with { Platform = rule?.Version ?? (entry.PlatformVersion.Length > 0 ? entry.PlatformVersion : "Не найдена"), PlatformMissing = true,
                 ArchitectureLabel = rule?.Architecture switch { PlatformArchitecture.X86 => "x86", PlatformArchitecture.X64 => "x64", PlatformArchitecture.Arm64 => "ARM64", _ => "" },
                 Note = ex.Message + "\n" + result.Note };

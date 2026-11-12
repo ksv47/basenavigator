@@ -193,7 +193,9 @@ public sealed class WebClientTests : IDisposable
         var entry = Web with { Executable = oldThin, PlatformRule = new() { Version = "8.3.27" } };
         var start = Launcher.Build(new Library(), entry, false, [installation]);
         Assert.Equal(Thin, start.FileName);
-        Assert.Equal(new[] { "ENTERPRISE", "/WS", Address, "/AppAutoCheckVersion-" }, start.ArgumentList);
+        Assert.Equal(new[] { "ENTERPRISE", "/WS", Address }, start.ArgumentList);
+        var pinned = Launcher.Build(new Library(), entry with { PlatformRule = new() { Version = "8.3.27.2214" } }, false, [installation]);
+        Assert.Equal(new[] { "ENTERPRISE", "/WS", Address, "/AppAutoCheckVersion-" }, pinned.ArgumentList);
     }
 
     [Fact] public void ElevationStartsTheThinClientInsteadOfTheBrowser() =>

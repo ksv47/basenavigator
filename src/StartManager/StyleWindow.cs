@@ -22,8 +22,8 @@ internal sealed class AppearanceEditor : UserControl
     private readonly Slider intensity = new() { Minimum = 0, Maximum = 255, SmallChange = 8, LargeChange = 32, TickFrequency = 1,
         IsSnapToTickEnabled = true, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly CheckBox tooltips = new() { Content = new TextBlock { Text = "Отображать всплывающие подсказки", TextWrapping = TextWrapping.Wrap } };
-    private readonly CheckBox groupsOnTop = new() { Content = new TextBlock { Text = "Отображать группы сверху (при сортировке по наименованию)", TextWrapping = TextWrapping.Wrap } };
-    private readonly Border preview = new() { Padding = new Thickness(14), BorderThickness = new Thickness(1) };
+    private readonly CheckBox groupsOnTop = new() { Content = new TextBlock { Text = "Отображать группы сверху", TextWrapping = TextWrapping.Wrap } };
+    private readonly Border preview = new() { Padding = new Thickness(8), BorderThickness = new Thickness(1) };
     private readonly TextBlock message = new() { TextWrapping = TextWrapping.Wrap };
     private bool updating;
 
@@ -32,58 +32,80 @@ internal sealed class AppearanceEditor : UserControl
         original = settings;
         var type = UiTypography.From(settings);
         FontFamily = type.DialogFamily; FontSize = type.DialogSize;
-        var panel = new StackPanel { Spacing = 10 };
-        panel.Children.Add(DialogLayout.Section("Стиль", FontEditor("list", "Шрифт списка", false)));
-        var extra = new StackPanel { Spacing = 14 };
-        extra.Children.Add(FontEditor("ui", "Меню и панели", true));
-        extra.Children.Add(FontEditor("headers", "Заголовки колонок", true));
-        extra.Children.Add(FontEditor("dialogs", "Диалоги", true));
-        var advanced = new Expander { Header = new TextBlock { Text = "Шрифты интерфейса и диалогов", TextWrapping = TextWrapping.Wrap }, Content = extra, HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetName(advanced, "Шрифты интерфейса и диалогов"); panel.Children.Add(advanced);
-        var row = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 8 };
-        row.Children.Add(new TextBlock { Text = "Минимальная высота строки", TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
-        rowHeight.MinWidth = Math.Max(96, FontSize * 4 + 40); Grid.SetColumn(rowHeight, 1); row.Children.Add(rowHeight);
-        var tree = new StackPanel { Spacing = 8 };
-        tree.Children.Add(row);
-        tree.Children.Add(new TextBlock { Text = "Строка автоматически увеличится, если выбранному шрифту нужно больше места.", TextWrapping = TextWrapping.Wrap });
-        tree.Children.Add(tooltips); tree.Children.Add(groupsOnTop);
-        // As the original's panel: «Выделение активной строки» before «Настройка дерева списка».
-        // The label above the slider: a narrow window with a large font keeps the whole width for the track.
-        var selection = new StackPanel { Spacing = 4 };
-        selection.Children.Add(new TextBlock { Text = "Интенсивность выделения:", TextWrapping = TextWrapping.Wrap });
-        selection.Children.Add(intensity);
-        panel.Children.Add(DialogLayout.Section("Выделение активной строки", selection));
-        panel.Children.Add(DialogLayout.Section("Настройка дерева списка", tree));
+        var size = type.DialogSize;
+        // The original's style panel (smFormInterface): «Стиль» with «Шрифт:» and «Размер:» on one line, «Выделение активной строки»,
+        // «Настройка дерева списка», «Сортировка списка»; the theme and the fonts of the other roles are ours.
+        var style = DialogLayout.Rows();
+        style.Children.Add(FontEditor("list", "Шрифт списка", "Шрифт:", false));
+        theme.HorizontalAlignment = HorizontalAlignment.Left; theme.ItemTemplate = DialogLayout.OneLine;
+        theme.MinWidth = Math.Ceiling(UiTypography.Measure("Системная", type.DialogFamily, size).Width) + 48;
+        // «По умолчанию» at the right of the theme: it resets every field of the page.
+        var reset = SettingsWindow.Command("По умолчанию", () => { resetRequested = true; Load(original.Reset()); });
+        ToolTip.SetTip(reset, "Вернуть шрифты, тему и оформление списка по умолчанию");
+        reset.Margin = default;
+        // A narrow page puts the button under the theme instead of cutting its caption (Codex audit 11.11).
+        var themeRow = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = 12, LineSpacing = 6 };
+        themeRow.Children.Add(theme); themeRow.Children.Add(reset);
+        style.Children.Add(DialogLayout.Field("Тема:", themeRow));
+        var extra = DialogLayout.Rows();
+        extra.Children.Add(FontEditor("ui", "Меню и панели", "Меню и панели:", true));
+        extra.Children.Add(FontEditor("headers", "Заголовки колонок", "Заголовки колонок:", true));
+        extra.Children.Add(FontEditor("dialogs", "Диалоги", "Диалоги:", true));
+        var selection = DialogLayout.Rows();
+        selection.Children.Add(DialogLayout.Field("Интенсивность выделения:", intensity));
+        rowHeight.MinWidth = Math.Round(FontSize * 5); rowHeight.HorizontalAlignment = HorizontalAlignment.Left;
+        ToolTip.SetTip(rowHeight, "Минимальная высота строки: строка автоматически увеличится, если выбранному шрифту нужно больше места.");
+        var tree = DialogLayout.Rows();
+        // As the original: the check box on the line of the row height; under it when the page is narrow.
+        var heightRow = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = 16, LineSpacing = 6 };
+        heightRow.Children.Add(rowHeight); heightRow.Children.Add(tooltips);
+        var heightField = (Grid)DialogLayout.Field("Высота строки:", heightRow);
+        // When the check box goes under the field, the caption stays at the field's line.
+        heightField.Children[0].VerticalAlignment = VerticalAlignment.Top;
+        heightField.Children[0].Margin = new Thickness(0, Math.Max(0, Math.Floor((type.ControlHeight - UiTypography.Measure("Йр", type.DialogFamily, size).Height) / 2)), 0, 0);
+        tree.Children.Add(heightField);
+        var sorting = DialogLayout.Rows();
+        ToolTip.SetTip(groupsOnTop, "При сортировке по наименованию");
+        sorting.Children.Add(groupsOnTop);
         AutomationProperties.SetName(intensity, "Интенсивность выделения");
         AutomationProperties.SetName(tooltips, "Отображать всплывающие подсказки"); AutomationProperties.SetName(groupsOnTop, "Отображать группы сверху");
-        var themeRow = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 12 };
-        themeRow.Children.Add(new TextBlock { Text = "Тема", VerticalAlignment = VerticalAlignment.Center });
-        Grid.SetColumn(theme, 1); themeRow.Children.Add(theme); panel.Children.Add(themeRow);
         AutomationProperties.SetName(theme, "Тема оформления");
         AutomationProperties.SetName(rowHeight, "Минимальная высота строки");
-        var reset = SettingsWindow.Command("По умолчанию", () => { resetRequested = true; Load(original.Reset()); }); panel.Children.Add(reset);
-        panel.Children.Add(preview); panel.Children.Add(message); Content = panel;
+        var end = DialogLayout.Rows();
+        end.Children.Add(preview);
+        // Only a warning of the saved profile or an error of a field: the page says nothing by default.
+        message.Foreground = UiColors.Error;
+        end.Children.Add(message);
+        var panel = DialogLayout.Groups(DialogLayout.Group("Стиль", style, size), DialogLayout.Group("Шрифты интерфейса и диалогов", extra, size),
+            DialogLayout.Group("Выделение активной строки", selection, size), DialogLayout.Group("Настройка дерева списка", tree, size),
+            DialogLayout.Group("Сортировка списка", sorting, size), end);
+        DialogLayout.AlignCaptions(panel);
+        Content = panel;
         theme.SelectionChanged += (_, _) => RefreshPreview(); rowHeight.ValueChanged += (_, _) => RefreshPreview();
         intensity.ValueChanged += (_, _) => RefreshPreview();
         tooltips.IsCheckedChanged += (_, _) => RefreshPreview(); groupsOnTop.IsCheckedChanged += (_, _) => RefreshPreview();
         rowHeight.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.TextProperty) RefreshPreview(); };
         Load(settings);
     }
-    private static TextBlock Heading(string text) => new() { Text = text, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
-    private Control FontEditor(string key, string label, bool inherits)
+    /// <summary>One row of a font: the caption, the family and «Размер:» with the size, as the original's «Шрифт: [] Размер: []».
+    /// The font actually used is in the tooltip of the family; a line under the row says when the chosen one is not installed.</summary>
+    private Control FontEditor(string key, string name, string caption, bool inherits)
     {
-        var family = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0, MaxDropDownHeight = 320 };
+        var family = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 0, MaxDropDownHeight = 320, ItemTemplate = DialogLayout.OneLine };
         var choices = new[] { new FamilyChoice("", inherits ? "Как у списка" : "Системный шрифт") }
             .Concat(UiTypography.InstalledFonts.Select(x => new FamilyChoice(x, x))).ToList();
         family.ItemsSource = choices;
-        var size = new NumericUpDown { Minimum = 10, Maximum = 24, Increment = 1, FormatString = "G", MinWidth = Math.Max(96, FontSize * 4 + 40) };
-        AutomationProperties.SetName(family, label + ": семейство"); AutomationProperties.SetName(size, label + ": размер");
-        var resolved = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var size = new NumericUpDown { Minimum = 10, Maximum = 24, Increment = 1, FormatString = "G", MinWidth = Math.Round(FontSize * 5) };
+        AutomationProperties.SetName(family, name + ": семейство"); AutomationProperties.SetName(size, name + ": размер");
+        var resolved = DialogLayout.Note("", FontSize);
         fonts.Add(key, (family, size, resolved));
-        var panel = new StackPanel { Spacing = 6 }; panel.Children.Add(Heading(label));
-        var fields = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 8 };
-        fields.Children.Add(family); Grid.SetColumn(size, 1); fields.Children.Add(size);
-        panel.Children.Add(fields); panel.Children.Add(resolved);
+        var fields = new Grid { ColumnDefinitions = new("*,Auto,Auto"), ColumnSpacing = 6 };
+        var sizeCaption = new TextBlock { Text = "Размер:", VerticalAlignment = VerticalAlignment.Center };
+        fields.Children.Add(family); Grid.SetColumn(sizeCaption, 1); fields.Children.Add(sizeCaption); Grid.SetColumn(size, 2); fields.Children.Add(size);
+        // A narrow row keeps the family readable: «Размер:» gives way first (the size keeps its accessible name).
+        fields.SizeChanged += (_, e) => sizeCaption.IsVisible = e.NewSize.Width >= FontSize * 22;
+        var panel = new StackPanel { Spacing = 2 };
+        panel.Children.Add(DialogLayout.Field(caption, fields)); panel.Children.Add(resolved);
         family.SelectionChanged += (_, _) => RefreshPreview(); size.ValueChanged += (_, _) => RefreshPreview();
         size.PropertyChanged += (_, e) => { if (e.Property == NumericUpDown.TextProperty) RefreshPreview(); };
         return panel;
@@ -160,10 +182,15 @@ internal sealed class AppearanceEditor : UserControl
             preview.Background = Brush.Parse(dark ? "#282E36" : "#F0EFEB");
             // Keep editor controls at the saved size while previewing large dialog fonts.
             foreach (var (key, requested, actual) in new[] { ("list", settings.List.Family, type.ListFamily), ("ui", settings.Interface.Family, type.Family), ("headers", settings.Headers.Family, type.HeaderFamily), ("dialogs", settings.Dialogs.Family, type.DialogFamily) })
-                fonts[key].Resolved.Text = requested.Length == 0 || requested.Equals(actual.Name, StringComparison.OrdinalIgnoreCase)
-                    ? "Используется " + actual.Name : requested + " недоступен → " + actual.Name;
-            var sample = new StackPanel { Spacing = 14 };
-            sample.Children.Add(new TextBlock { Text = "Предпросмотр", FontFamily = type.Family, FontSize = type.InterfaceSize, FontWeight = FontWeight.SemiBold });
+            {
+                var available = requested.Length == 0 || requested.Equals(actual.Name, StringComparison.OrdinalIgnoreCase);
+                var editor = fonts[key];
+                editor.Resolved.Text = available ? "Используется " + actual.Name : requested + " недоступен → " + actual.Name;
+                editor.Resolved.IsVisible = !available;
+                ToolTip.SetTip(editor.Family, editor.Resolved.Text);
+            }
+            var sample = new StackPanel { Spacing = 6 };
+            sample.Children.Add(new TextBlock { Text = $"Предпросмотр · высота строки {type.RowHeight:0}", FontFamily = type.Family, FontSize = type.InterfaceSize, FontWeight = FontWeight.SemiBold });
             var table = new StackPanel();
             var previewColumns = "*," + Math.Ceiling(Math.Max(UiTypography.Measure("Платформа", type.HeaderFamily, type.ColumnHeaderSize).Width,
                 UiTypography.Measure("8.3.27", type.ListFamily, type.ListSize).Width) + 20).ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -186,15 +213,12 @@ internal sealed class AppearanceEditor : UserControl
             table.Children.Add(Row("Бухгалтерия предприятия", "8.3.27", false, true));
             table.Children.Add(Row("Зарплата и управление персоналом", "8.3.27", false, false));
             table.Children.Add(Row("Документооборот — учебная база", "8.3.26", false, false)); sample.Children.Add(table);
-            sample.Children.Add(new TextBlock { Text = "Добавить базу…   Свойства…", FontFamily = type.Family, FontSize = type.InterfaceSize, TextWrapping = TextWrapping.Wrap });
-            sample.Children.Add(new Border { Padding = new Thickness(12), BorderThickness = new Thickness(1), BorderBrush = Brush.Parse(dark ? "#596675" : "#B7BFC7"),
-                Child = new TextBlock { Text = "Пример диалога\nНастройки будут применены к списку, меню и окнам программы.", FontFamily = type.DialogFamily, FontSize = type.DialogSize, Foreground = Brush.Parse(dark ? "#E7EDF3" : "#252B31"), TextWrapping = TextWrapping.Wrap } });
-            sample.Children.Add(new TextBlock { Text = $"Высота строки: {type.RowHeight:0} · размеры в логических пикселях", TextWrapping = TextWrapping.Wrap });
+            sample.Children.Add(new TextBlock { Text = "Пример текста диалога", FontFamily = type.DialogFamily, FontSize = type.DialogSize, TextWrapping = TextWrapping.Wrap });
             foreach (var text in sample.Children.OfType<TextBlock>()) text.Foreground = Brush.Parse(dark ? "#E7EDF3" : "#252B31");
             preview.Child = sample; preview.BorderBrush = Brush.Parse(dark ? "#596675" : "#B7BFC7");
-            message.Text = (original.LoadWarning is { } warning ? warning + "\n" : "") +
-                "Предпросмотр. Нажмите «Применить», чтобы сохранить оформление.";
+            message.Text = original.LoadWarning ?? "";
+            message.IsVisible = message.Text.Length > 0;
         }
-        catch (Exception ex) { message.Text = LegacyImport.ErrorMessage(ex); }
+        catch (Exception ex) { message.Text = LegacyImport.ErrorMessage(ex); message.IsVisible = true; }
     }
 }

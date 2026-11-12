@@ -78,7 +78,7 @@ public sealed class PlatformAuditTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, "fixture");
         var installation = new PlatformInstallation(path, new(8, 3, 27, 1), architecture);
         var result = BaseInfo.Read(Entry with { Executable = path, PlatformVersion = "8.3" }, new(), [installation]);
-        Assert.False(result.PlatformMissing); Assert.Equal("8.3", result.Platform);
+        Assert.False(result.PlatformMissing); Assert.Equal("8.3.27.1", result.Platform); // the client's own release, not Version= (F4)
         Assert.Equal(architecture == PlatformArchitecture.Any ? "" : label, result.ArchitectureLabel);
         Assert.Contains(label, result.Note);
         File.Delete(path);

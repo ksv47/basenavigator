@@ -50,10 +50,36 @@ public sealed partial class MainWindow
     // on the field colour with a scale of 80–140 % and «OK». F1 and Alt+F1 both open it (there is no full help).
     private void ShowShortHelp() => ShowShortHelp(null);
 
-    private void ShowShortHelp(PixelPoint? position)
+    // The sections of the dialogs' explanations in the open help, by title: F1 in a modal dialog scrolls to its own.
+    private readonly Dictionary<string, Control> shortHelpNotes = [];
+    private ScrollViewer? shortHelpScroll;
+
+    /// <summary>F1 and Alt+F1 in the modal «Настройки программы» (or another dialog with its own section, e.g. the base properties):
+    /// the help above that window, scrolled to its section (the explanations moved from the pages are there; Codex audit 11.11).</summary>
+    private void ShowShortHelpForSettings(Window settings, string section = "Настройки программы")
+    {
+        if (closed) return;
+        // A help already open above the main window is given to the settings window, or it could stay behind the modal one.
+        if (shortHelp is { } open && open.Owner != settings)
+        {
+            var position = open.Position;
+            shortHelp = null; open.Close();
+            ShowShortHelp(position, settings);
+        }
+        else if (shortHelp is null) ShowShortHelp(null, settings);
+        else shortHelp.Activate();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (shortHelpScroll is { } scroll && shortHelpNotes.GetValueOrDefault(section)?.TranslatePoint(default, (Visual)scroll.Content!) is { } at)
+                scroll.Offset = new Vector(0, at.Y);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ShowShortHelp(PixelPoint? position, Window? owner = null)
     {
         if (closed) return;
         if (shortHelp is not null) { shortHelp.Activate(); return; }
+        shortHelpNotes.Clear();
         var window = new Window { Title = "Краткая справка", Width = 455, Height = 401, MinWidth = 250, MinHeight = 200,
             WindowStartupLocation = position is null ? WindowStartupLocation.CenterOwner : WindowStartupLocation.Manual, ShowInTaskbar = false };
         if (position is { } place) window.Position = place;
@@ -74,8 +100,22 @@ public sealed partial class MainWindow
                 text.Children.Add(row);
             }
         }
+        // The explanations of «Настройки программы» and of the base properties after the keys, one wrapped paragraph each.
+        foreach (var note in ShortHelp.DialogNotes)
+        {
+            var heading = new TextBlock { Text = note.Title, FontWeight = FontWeight.Bold, Foreground = UiColors.SectionText, Margin = new Thickness(0, 10, 0, 2) };
+            text.Children.Add(heading); shortHelpNotes.TryAdd(note.Title, heading);
+            foreach (var line in note.Lines)
+            {
+                var row = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 6, Margin = new Thickness(12, 0, 0, 2) };
+                row.Children.Add(new TextBlock { Text = "•" });
+                var words = new SelectableTextBlock { Text = line, TextWrapping = TextWrapping.Wrap };
+                Grid.SetColumn(words, 1); row.Children.Add(words);
+                text.Children.Add(row);
+            }
+        }
         var field = new Border { Background = UiColors.Field, BorderBrush = UiColors.Line, BorderThickness = new Thickness(1),
-            Child = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
+            Child = shortHelpScroll = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
         AutomationProperties.SetName(field, "Текст краткой справки");
         // As the original: the scale on the left, «OK» on the right.
         var buttons = new DockPanel();
@@ -114,9 +154,10 @@ public sealed partial class MainWindow
         Scale();
         window.Opened += (_, _) => Dispatcher.UIThread.Post(() => ok.Focus(), DispatcherPriority.Input);
         // A window replaced by RefreshShortHelp is no longer the open one: its closing leaves the new one and the focus alone.
-        window.Closed += (_, _) => { if (shortHelp != window) return; shortHelp = null; if (!closed) RestoreListFocus(); };
+        // Above the modal settings it belongs to that window (the main one is disabled meanwhile) and leaves the focus there.
+        window.Closed += (_, _) => { if (shortHelp != window) return; shortHelp = null; if (!closed && owner is null) RestoreListFocus(); };
         shortHelp = window; shortHelpFont = (typography.DialogFamily.Name, typography.DialogSize);
-        window.Show(this);
+        window.Show(owner ?? this);
     }
 
     // The original's «О программе» (smFormAbout): the heading with the icon, the name and the version; «Сведения о программе»;

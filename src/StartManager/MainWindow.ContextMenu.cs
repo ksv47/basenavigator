@@ -432,23 +432,28 @@ public sealed partial class MainWindow
         // The group choice follows FormGetGroup: a fixed-size window, «Выбрать» and «Отмена» above the tree, «Развернуть все» and
         // «Свернуть все» on the right, the tree under its column header «Группа». Typing a new path below the tree is our addition.
         var dialog = move
-            ? new Window { Title = "Выбор группы", Width = 580, Height = 440, MinWidth = 450, MinHeight = 400, WindowStartupLocation = WindowStartupLocation.CenterOwner }
+            ? new Window { Title = "Выбор группы", Width = 580, Height = 440, MinWidth = 450, MinHeight = 400, WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                CanMaximize = false, CanMinimize = false }
             : new Window { Title = "Изменение наименования информационной базы", Width = 520, SizeToContent = SizeToContent.Height,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner };
         var field = new TextBox { Text = move ? entry.Group : entry.Name };
         AutomationProperties.SetName(field, move ? "Группа базы" : "Наименование базы");
         var panel = new StackPanel { Spacing = 10 };
+        // The caption column as wide as the caption, as the original's forms.
+        DialogLayout.AlignCaptions(panel);
         panel.Children.Add(DialogLayout.Field(move ? "Группа:" : "Наименование:", field));
         TreeViewItem? selected = null;
         Control? tree = null;
         var nodes = new Dictionary<string, TreeViewItem>(StringComparer.OrdinalIgnoreCase);
         if (move)
         {
-            panel.Children.Add(DialogLayout.Label("Выберите группу в дереве или укажите путь. Пустое поле — вне групп."));
+            // Our field under the tree; its explanation in the tooltip, opened by the keyboard too.
+            ToolTip.SetTip(field, "Выберите группу в дереве или укажите путь. Пустое поле — вне групп.");
+            DialogLayout.TipOnFocus(field);
             Control Folder(TextBlock label)
             {
                 var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                var icon = UiIcons.Create("folder", typography.IconSize); icon.VerticalAlignment = VerticalAlignment.Center;
+                var icon = UiIcons.Create("folder", typography.DialogIconSize); icon.VerticalAlignment = VerticalAlignment.Center;
                 label.VerticalAlignment = VerticalAlignment.Center; label.TextWrapping = TextWrapping.NoWrap;
                 header.Children.Add(icon); header.Children.Add(label); return header;
             }
@@ -474,6 +479,8 @@ public sealed partial class MainWindow
             }
             var groups = new TreeView { ItemsSource = new[] { rootGroup }, Background = UiColors.Field };
             AutomationProperties.SetName(groups, "Существующие группы");
+            // As the original's tree: rows of about a line, the chosen group yellow as in the main list.
+            DialogLayout.CompactTree(groups, typography); DialogLayout.YellowSelection(groups);
             groups.SelectionChanged += (_, _) => { if (groups.SelectedItem is TreeViewItem { Tag: string path }) field.Text = path; };
             // As the original's Timer1Timer: the tree collapsed, only the way to the base's group open (Grok audit 13.10).
             if (nodes.TryGetValue(entry.Group, out selected))
@@ -521,15 +528,15 @@ public sealed partial class MainWindow
         {
             // «Выбрать» of the original: bold, with the arrow.
             var choose = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            choose.Children.Add(UiIcons.Create("way", typography.IconSize));
+            choose.Children.Add(UiIcons.Create("way", typography.DialogIconSize));
             choose.Children.Add(new TextBlock { Text = "Выбрать", FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center });
             save.Content = choose; save.MinWidth = 110; cancel.MinWidth = 90;
             buttons.Children.Add(save); buttons.Children.Add(cancel);
             Button Tool(string icon, string label, bool expand)
             {
-                var button = new Button { Content = UiIcons.Create(icon, typography.IconSize), Padding = new Thickness(3), MinHeight = 0,
+                var button = new Button { Content = UiIcons.Create(icon, typography.DialogIconSize), Padding = new Thickness(3), MinHeight = 0,
                     Background = Brushes.Transparent, BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-                button.Width = button.Height = Math.Max(26, typography.IconSize + 10);
+                button.Width = button.Height = Math.Max(26, typography.DialogIconSize + 10);
                 ToolTip.SetTip(button, label); AutomationProperties.SetName(button, label);
                 // Collapsing keeps the root open: collapsed, it would leave a single line. Expanding opens it too.
                 button.Click += (_, _) => { foreach (var (path, node) in nodes) if (expand || path.Length > 0) node.IsExpanded = expand; };

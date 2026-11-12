@@ -19,7 +19,8 @@ public sealed class AppearanceTests : IDisposable
         Assert.Equal(13, original.Appearance.List.Size);
         Assert.Equal(11, original.Appearance.Interface.Size);
         Assert.Equal(12, original.Appearance.Headers.Size);
-        Assert.Equal(14, original.Appearance.Dialogs.Size);
+        Assert.Equal(AppearanceSettings.DefaultDialogSize, original.Appearance.Dialogs.Size);
+        Assert.Equal(12, AppearanceSettings.DefaultDialogSize);
         var list = Path.Combine(directory, "shared.v8i");
         File.WriteAllText(list, $"[Example]\nConnect=Srvr=\"server\";Ref=\"base\";\nID={Guid.NewGuid()}\nUnknown=keep\n");
         var bytes = File.ReadAllBytes(list);
@@ -30,6 +31,21 @@ public sealed class AppearanceTests : IDisposable
         Assert.Equal(appearance, reopened.Appearance);
         Assert.Equal(appearance, LibrarySources.Select(reopened, Settings, "").Appearance);
         Assert.Equal(bytes, File.ReadAllBytes(list));
+    }
+
+    [Fact]
+    public void SavedDialogSizeOfEarlierBuildsIsKeptAndOnlyResetTakesTheNewDefault()
+    {
+        // 14 was the default before 11.11.2026: a profile that saved it keeps it through load and save, no migration.
+        File.WriteAllText(Settings, """{"Version":1,"Appearance":{"Dialogs":{"Family":"","Size":14}}}""");
+        var store = new LibraryStore(Settings); var loaded = store.Load();
+        Assert.Equal(14, loaded.Appearance.Dialogs.Size);
+        store.Save(loaded);
+        Assert.Equal(14, store.Load().Appearance.Dialogs.Size);
+        Assert.Equal(AppearanceSettings.DefaultDialogSize, loaded.Appearance.Reset().Dialogs.Size);
+        // A profile without a dialog size, or without appearance at all, gets the new default.
+        File.WriteAllText(Settings, """{"Version":1,"Appearance":{"Dialogs":{"Family":"Verdana"}}}""");
+        Assert.Equal(AppearanceSettings.DefaultDialogSize, store.Load().Appearance.Dialogs.Size);
     }
 
     [Fact]

@@ -25,6 +25,9 @@ public sealed record AppearanceSettings
     public const double DefaultListSize = 13;
     public const double DefaultInterfaceSize = 11;
     public const double DefaultHeaderSize = 12;
+    // Compact dialogs as the original's 8 pt forms (decision of the user 11.11.2026). Only the default: a size saved in the
+    // profile, 14 of earlier builds included, is read as it is and never migrated.
+    public const double DefaultDialogSize = 12;
     // The original main list: DefaultNodeHeight = 22 (smMainForm.dfm); its other trees use 20–21.
     public const double DefaultRowHeight = 22;
     // The original's «Интенсивность выделения» (SelectionBlendFactor 0–255, 128 by default): 128 is the colour used so far.
@@ -33,7 +36,7 @@ public sealed record AppearanceSettings
     public FontPreference List { get; init; } = new() { Size = DefaultListSize };
     public FontPreference Interface { get; init; } = new() { Size = DefaultInterfaceSize };
     public FontPreference Headers { get; init; } = new() { Size = DefaultHeaderSize };
-    public FontPreference Dialogs { get; init; } = new();
+    public FontPreference Dialogs { get; init; } = new() { Size = DefaultDialogSize };
     public double MinimumRowHeight { get; init; } = DefaultRowHeight;
     public double SelectionIntensity { get; init; } = DefaultSelectionIntensity;
     /// <summary>«Отображать всплывающие подсказки» (ShowHint) of the rows of the list; the buttons keep theirs.</summary>
@@ -92,7 +95,7 @@ public sealed record AppearanceSettings
         Theme = AppearanceTheme.System, MinimumRowHeight = DefaultRowHeight, UnrecognizedSource = null, LoadWarning = null,
         SelectionIntensity = DefaultSelectionIntensity, ListTooltips = true, GroupsOnTop = true,
         List = List with { Family = "", Size = DefaultListSize }, Interface = Interface with { Family = "", Size = DefaultInterfaceSize },
-        Headers = Headers with { Family = "", Size = DefaultHeaderSize }, Dialogs = Dialogs with { Family = "", Size = 14 }
+        Headers = Headers with { Family = "", Size = DefaultHeaderSize }, Dialogs = Dialogs with { Family = "", Size = DefaultDialogSize }
     };
 }
 

@@ -24,6 +24,15 @@ internal sealed record UiTypography
     public double ListSize { get; init; }
     public double ColumnHeaderSize { get; init; }
     public double DialogSize { get; init; }
+    // The compact dialogs (settings look 11.11.2026): a field, a list and a spin box about 1.75 × the dialog font and never lower than
+    // a line of it with a small padding, as the original's 21–22 px fields at 8 pt; a check box row a little lower.
+    public double ControlHeight => Math.Max(Math.Round(DialogSize * 1.75), DialogLine + 8);
+    public double CheckRowHeight => Math.Max(Math.Round(DialogSize * 1.6), DialogLine + 4);
+    // The box of a check box and the circle of a radio button: 13–14 px as the standard ones at the default font, growing with it.
+    public double CheckSize => Math.Clamp(Math.Round(DialogSize * 1.15), 13, 20);
+    // The icons inside dialogs (path fields, list and tool bar buttons) follow the dialog font, not the menu and panel font.
+    public double DialogIconSize => Math.Round(16 * Math.Max(1, DialogSize / 13));
+    private double DialogLine => Math.Ceiling(Measure("Йру", DialogFamily, DialogSize).Height);
     public double RowHeight { get; init; }
     public double HeaderHeight { get; init; }
     // Widths of the list columns; the name takes the rest and needs at least NameWidth.
@@ -82,6 +91,7 @@ internal sealed record UiTypography
         foreach (var text in dialog.GetLogicalDescendants().OfType<TextBlock>()) text.TextWrapping = TextWrapping.Wrap;
         foreach (var row in dialog.GetLogicalDescendants().OfType<WrapPanel>())
             foreach (var child in row.Children) child.Margin = new Avalonia.Thickness(0, 0, 8, 6);
+        DialogLayout.Compact(dialog, this);
         FitOnScreenChanges(dialog);
     }
     // A larger dialog font enlarges the window by part of the font's growth: fields stack under their captions

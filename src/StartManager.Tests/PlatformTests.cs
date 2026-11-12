@@ -136,9 +136,10 @@ public sealed class PlatformTests : IDisposable
     {
         var native = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? PlatformArchitecture.Arm64 : PlatformArchitecture.X64;
         var installation = new PlatformInstallation(Environment.ProcessPath!, new Version(8, 3, 27, 1), native);
-        var start = Launcher.Build(new Library { PlatformRule = new() }, Entry, true, [installation]);
+        var start = Launcher.Build(new Library { PlatformRule = new() { Version = "8.3.27.1" } }, Entry, true, [installation]);
         Assert.Equal(Environment.ProcessPath, start.FileName);
         Assert.Equal(new[] { "DESIGNER", "/S", Entry.Location, "/AppAutoCheckVersion-" }, start.ArgumentList);
+        Assert.DoesNotContain("/AppAutoCheckVersion-", Launcher.Build(new Library { PlatformRule = new() }, Entry, true, [installation]).ArgumentList);
         Assert.DoesNotContain("/AppAutoCheckVersion-", Launcher.Build(new Library { Executable = Environment.ProcessPath! }, Entry, false, []).ArgumentList);
     }
     [Theory] [InlineData(false)] [InlineData(true)]
@@ -169,6 +170,64 @@ public sealed class PlatformTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, "unknown-version fixture");
         var result = PlatformCatalog.Scan([folder]);
         Assert.Empty(result.Installations); Assert.Contains(path, Assert.Single(result.Warnings));
+    }
+
+    // Linux 4, Н2: a client chosen by hand inside a search folder is met in the walk and again in the explicit paths (the common
+    // client, the bases' own); its unknown version is reported once, whatever spelling of the same file the settings keep.
+    [Fact] public void AnUnreadableClientInASearchFolderIsReportedOnce()
+    {
+        var odd = Path.Combine(folder, "odd"); var path = Path.Combine(odd, OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8");
+        Directory.CreateDirectory(odd); File.WriteAllText(path, "unknown-version fixture");
+        var dotted = Path.Combine(folder, ".", "odd", Path.GetFileName(path));
+        var spellings = OperatingSystem.IsWindows() ? new[] { path, dotted, path.ToUpperInvariant() } : [path, dotted];
+        var result = PlatformCatalog.Scan([folder, odd], [.. spellings, path]);
+        Assert.Empty(result.Installations); Assert.Contains(path, Assert.Single(result.Warnings));
+        // Only the explicit paths: still once.
+        Assert.Single(PlatformCatalog.Scan([], [path, dotted, path]).Warnings);
+    }
+
+    // Codex audit of Н2, P2: the full path is read, so an alias with «.» segments finds the version from the folder names as the plain
+    // path does, in either order (the text of the alias has «.» for its nearest parents).
+    [Fact] public void ADottedAliasAndThePlainPathFindTheClientInEitherOrder()
+    {
+        var bin = Path.Combine(folder, "8.3.27.2214", "bin"); var path = Path.Combine(bin, OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8");
+        Directory.CreateDirectory(bin); File.WriteAllText(path, "fixture");
+        var dotted = Path.Combine(bin, ".", ".", Path.GetFileName(path));
+        foreach (var order in new[] { new[] { dotted, path }, [path, dotted] })
+        {
+            var scan = PlatformCatalog.Scan([], order);
+            var found = Assert.Single(scan.Installations);
+            Assert.Equal(new Version(8, 3, 27, 2214), found.Version); Assert.Equal(path, found.Executable);
+            Assert.Empty(scan.Warnings);
+        }
+        Assert.Equal(path, Assert.Single(PlatformCatalog.Scan([], [dotted]).Installations).Executable);
+    }
+
+    // Codex audit of Н2, P3: a spelling that is no path is said once, and the paths after it are still read.
+    [Fact] public void ARepeatedInvalidPathIsSaidOnceAndTheNextPathIsRead()
+    {
+        var path = Path.Combine(folder, "8.3.27.2214", "bin", OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, "fixture");
+        var scan = PlatformCatalog.Scan([], ["bad\0path", "bad\0path", path]);
+        Assert.StartsWith("Не удалось прочитать bad\0path", Assert.Single(scan.Warnings));
+        Assert.Equal(path, Assert.Single(scan.Installations).Executable);
+    }
+
+    [Fact] public void ARepeatedClientIsFoundOnceAndDistinctFilesKeepTheirWarnings()
+    {
+        var good = Path.Combine(folder, "8.3.27.2214", "bin", OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8");
+        Directory.CreateDirectory(Path.GetDirectoryName(good)!); File.WriteAllText(good, "fixture");
+        var first = Path.Combine(folder, "a", OperatingSystem.IsWindows() ? "1cv8.exe" : "1cv8");
+        var second = Path.Combine(folder, "b", OperatingSystem.IsWindows() ? "1cv8c.exe" : "1cv8c");
+        foreach (var file in new[] { first, second }) { Directory.CreateDirectory(Path.GetDirectoryName(file)!); File.WriteAllText(file, "unknown"); }
+        var result = PlatformCatalog.Scan([folder], [good, first, second, good, first]);
+        Assert.Equal(new Version(8, 3, 27, 2214), Assert.Single(result.Installations).Version);
+        Assert.Equal(Path.GetFullPath(good), result.Installations[0].Executable);
+        Assert.Equal(2, result.Warnings.Count);
+        Assert.Contains(result.Warnings, x => x.Contains(first)); Assert.Contains(result.Warnings, x => x.Contains(second));
+        // Linux keeps case: another spelling is another file there (absent here, so nothing is said about it).
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(2, PlatformCatalog.Scan([folder], [first.ToUpperInvariant()]).Warnings.Count);
     }
 
     [Fact] public void DisplayUsesSameRuleForWhitespaceManualPath()

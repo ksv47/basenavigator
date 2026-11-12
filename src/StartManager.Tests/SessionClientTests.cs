@@ -63,7 +63,10 @@ public sealed class SessionClientTests : IDisposable
         var installation = new PlatformInstallation(Thick, new Version(8, 3, 27, 2214), native);
         var byRule = Launcher.Build(new Library { PlatformRule = new() { Version = "8.3" } }, Entry, false, [installation]);
         Assert.Equal(starter, byRule.FileName);
-        Assert.Equal(new[] { "ENTERPRISE", "/S", Entry.Location, "/AppAutoCheckVersion-" }, byRule.ArgumentList);
+        // A rule of a family leaves 1C the choice of the server's release; a rule of one build keeps it.
+        Assert.Equal(new[] { "ENTERPRISE", "/S", Entry.Location }, byRule.ArgumentList);
+        var byBuild = Launcher.Build(new Library { PlatformRule = new() { Version = "8.3.27.2214" } }, Entry, false, [installation]);
+        Assert.Equal(new[] { "ENTERPRISE", "/S", Entry.Location, "/AppAutoCheckVersion-" }, byBuild.ArgumentList);
         // A file chosen by hand, the configurator and an explicit session client keep their executable.
         Assert.Equal(Thick, Launcher.Build(new Library { Executable = Thick }, Entry, false, []).FileName);
         Assert.Equal(Thick, Launcher.Build(new Library { PlatformRule = new() { Version = "8.3" } }, Entry, true, [installation]).FileName);

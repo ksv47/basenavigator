@@ -72,6 +72,31 @@ public sealed class AboutHelpTests
     }
 
     [Fact]
+    public void Settings_notes_keep_the_conditions_moved_from_the_pages()
+    {
+        // The pages of «Настройки программы» keep at most a short note per group (11.11.2026); the conditions are in the help.
+        var notes = Assert.Single(ShortHelp.DialogNotes, x => x.Title == "Настройки программы");
+        var text = string.Join("\n", notes.Lines);
+        foreach (var kept in new[] { "«Применить» и «Сохранить»", "CommonInfoBases=", ".versions", "Shift+Ctrl+F8", "1CEStart",
+            "до четырёх уровней", "«Резервное копирование»", "gh auth login", "при отсутствии совпадения запуск отменяется" })
+            Assert.Contains(kept, text);
+        Assert.All(notes.Lines, line => Assert.False(string.IsNullOrWhiteSpace(line)));
+    }
+
+    [Fact]
+    public void Properties_notes_keep_the_explanations_moved_into_the_tooltips()
+    {
+        // The base and group dialogs keep their data warnings on the pages; the explanations moved into tooltips are in the help too
+        // (step 3a, 12.11.2026), after the notes of the settings.
+        Assert.Equal(new[] { "Настройки программы", ShortHelp.PropertiesNotesTitle }, ShortHelp.DialogNotes.Select(x => x.Title));
+        var text = string.Join("\n", ShortHelp.DialogNotes[1].Lines);
+        foreach (var kept in new[] { "только в 1С:Предприятии", "тонкий клиент", "«Аутентификация»", "Shift+Ctrl+F8", "при отсутствии совпадения запуск отменяется",
+            "при запуске конфигуратора", "«1. Каталог»", "{Prefix}", "«Сценарии резервирования»", "Проекты/Клиент", "Shift+F12", "пустое поле — вне групп" })
+            Assert.Contains(kept, text);
+        Assert.All(ShortHelp.DialogNotes[1].Lines, line => Assert.False(string.IsNullOrWhiteSpace(line)));
+    }
+
+    [Fact]
     public void Shortcut_text_orders_the_modifiers()
     {
         // As VCL ShortCutToText of the original: Shift, Ctrl, Alt; «Ins» and «Del».

@@ -52,6 +52,7 @@ public sealed partial class MainWindow
                 status.Text = warning ?? (import is null ? "Настройки сохранены. " + SourceDescription() : "Импорт завершён. Открыт локальный список.");
                 return (library, warning);
             });
+        dialog.HelpRequested = () => ShowShortHelpForSettings(dialog);
         await dialog.ShowDialog(this);
     }
 }
